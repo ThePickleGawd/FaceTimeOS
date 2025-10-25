@@ -32,8 +32,6 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
   const [isAgentRunning, setIsAgentRunning] = useState(false)
 
-  const [currentModel, setCurrentModel] = useState<{ provider: string; model: string }>({ provider: "gemini", model: "gemini-2.0-flash" })
-
   const barRef = useRef<HTMLDivElement>(null)
   const agentTimeoutsRef = useRef<NodeJS.Timeout[]>([])
 
@@ -112,21 +110,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     // Send message to Agent S via POST /api/chat
     // The actual status updates will come from POST /api/currentaction
     try {
-      const response = await fetch('http://localhost:3456/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain',
-        },
-        body: userMessage
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-
-      // Agent will send status updates via the /api/currentaction endpoint
-      const data = await response.json()
-      console.log('Chat message sent to Agent S:', data)
+      const response = await window.electronAPI.sendChatPrompt(userMessage)
+      console.log("Chat message forwarded through server:", response)
     } catch (err) {
       console.error('Error sending chat message:', err)
       setAgentStatus(null)
@@ -140,36 +125,26 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     if (isAgentRunning) {
       // Pause the agent - send pause request to Agent S
       try {
-        const response = await fetch('http://localhost:3456/api/pause', {
-          method: 'GET'
-        })
+        await window.electronAPI.pauseAgent()
+        setIsAgentRunning(false)
+        setAgentStatus(null)
+        setChatLoading(false)
 
-        if (response.ok) {
-          setIsAgentRunning(false)
-          setAgentStatus(null)
-          setChatLoading(false)
+        // Clear all pending timeouts
+        agentTimeoutsRef.current.forEach(clearTimeout)
+        agentTimeoutsRef.current = []
 
-          // Clear all pending timeouts
-          agentTimeoutsRef.current.forEach(clearTimeout)
-          agentTimeoutsRef.current = []
-
-          setOriginalHistory((history) => [...history, "Agent paused by user."])
-        }
+        setOriginalHistory((history) => [...history, "Agent paused by user."])
       } catch (err) {
         console.error('Error pausing agent:', err)
       }
     } else {
       // Resume the agent - send resume request to Agent S
       try {
-        const response = await fetch('http://localhost:3456/api/resume', {
-          method: 'GET'
-        })
-
-        if (response.ok) {
-          setIsAgentRunning(true)
-          setAgentStatus("Resuming...")
-          setOriginalHistory((history) => [...history, "Agent resumed by user."])
-        }
+        await window.electronAPI.resumeAgent()
+        setIsAgentRunning(true)
+        setAgentStatus("Resuming...")
+        setOriginalHistory((history) => [...history, "Agent resumed by user."])
       } catch (err) {
         console.error('Error resuming agent:', err)
       }
@@ -179,21 +154,16 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const handleStopAgent = async () => {
     // Stop the agent completely - send stop request to Agent S
     try {
-      const response = await fetch('http://localhost:3456/api/stop', {
-        method: 'GET'
-      })
+      await window.electronAPI.stopAgent()
+      setIsAgentRunning(false)
+      setAgentStatus(null)
+      setChatLoading(false)
 
-      if (response.ok) {
-        setIsAgentRunning(false)
-        setAgentStatus(null)
-        setChatLoading(false)
+      // Clear all pending timeouts
+      agentTimeoutsRef.current.forEach(clearTimeout)
+      agentTimeoutsRef.current = []
 
-        // Clear all pending timeouts
-        agentTimeoutsRef.current.forEach(clearTimeout)
-        agentTimeoutsRef.current = []
-
-        setOriginalHistory((history) => [...history, "Agent stopped by user."])
-      }
+      setOriginalHistory((history) => [...history, "Agent stopped by user."])
     } catch (err) {
       console.error('Error stopping agent:', err)
     }
@@ -222,19 +192,6 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }, [])
 
-
-  // Load current model configuration on mount
-  useEffect(() => {
-    const loadCurrentModel = async () => {
-      try {
-        const config = await window.electronAPI.getCurrentLlmConfig();
-        setCurrentModel({ provider: config.provider, model: config.model });
-      } catch (error) {
-        console.error('Error loading current model config:', error);
-      }
-    };
-    loadCurrentModel();
-  }, []);
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -280,33 +237,6 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       cleanupFunctions.forEach((cleanup) => cleanup())
     }
   }, [])
-
-  // Seamless screenshot-to-LLM flow
-  useEffect(() => {
-    // Listen for screenshot taken event
-    const unsubscribe = window.electronAPI.onScreenshotTaken(async (data) => {
-      // Refetch screenshots to update the queue
-      await refetch();
-      // Show loading
-      setChatLoading(true);
-      try {
-        // Get the latest screenshot path
-        const latest = data?.path || (Array.isArray(data) && data.length > 0 && data[data.length - 1]?.path);
-        if (latest) {
-          // Call the LLM to process the screenshot
-          const response = await window.electronAPI.invoke("analyze-image-file", latest);
-          setOriginalHistory((history) => [...history, response.text]);
-        }
-      } catch (err) {
-        setOriginalHistory((history) => [...history, "Error: " + String(err)]);
-      } finally {
-        setChatLoading(false);
-      }
-    });
-    return () => {
-      unsubscribe && unsubscribe();
-    };
-  }, [refetch]);
 
   const handleChatInputChange = (value: string) => {
     setChatInput(value)

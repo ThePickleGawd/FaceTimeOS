@@ -8,11 +8,9 @@ If you’re looking for a hosted desktop recording API, consider checking out [R
 ## 🚀 Quick Start Guide
 
 ### Prerequisites
-- Make sure you have Node.js installed on your computer
-- Git installed on your computer  
-- **Either** a Gemini API key (get it from [Google AI Studio](https://makersuite.google.com/app/apikey))
-- **Or** an OpenAI API key (create one at [platform.openai.com](https://platform.openai.com/))
-- **Or** Ollama installed locally for private LLM usage (recommended for privacy)
+- Node.js (LTS) installed on your computer
+- Git installed on your computer
+- A REST backend that handles chat/agent commands (the bundled proxy forwards to `http://localhost:5000` by default)
 
 ### Installation Steps
 
@@ -31,30 +29,6 @@ npm rebuild sharp
 # Or for normal installation:
 npm install
 ```
-
-3. Set up environment variables:
-   - Create a file named `.env` in the root folder
-   
-   **For Gemini (Cloud AI):**
-   ```env
-   GEMINI_API_KEY=your_api_key_here
-   ```
-
-   **For OpenAI (Cloud AI):**
-   ```env
-   OPENAI_API_KEY=your_api_key_here
-   # Optional: override default model (defaults to gpt-4o-mini)
-   OPENAI_MODEL=gpt-4o
-   ```
-   
-   **For Ollama (Local/Private AI):**
-   ```env
-   USE_OLLAMA=true
-   OLLAMA_MODEL=llama3.2
-   OLLAMA_URL=http://localhost:11434
-   ```
-   
-   - Save the file
 
 ### Running the App
 
@@ -75,42 +49,6 @@ npm run dist
 ```
 The built app will be in the `release` folder.
 
-## 🤖 AI Provider Options
-
-### Ollama (Recommended for Privacy)
-**Pros:**
-- 100% private - data never leaves your computer
-- No API costs
-- Works offline
-- Supports many models: llama3.2, codellama, mistral, etc.
-
-**Setup:**
-1. Install Ollama from [ollama.ai](https://ollama.ai)
-2. Pull a model: `ollama pull llama3.2`
-3. Set environment variables as shown above
-
-### Google Gemini
-**Pros:**
-- Latest AI technology
-- Fastest responses
-- Best accuracy for complex tasks
-
-**Cons:**
-- Requires API key and internet
-- Data sent to Google servers
-- Usage costs apply
-
-### OpenAI
-**Pros:**
-- Broad model ecosystem (GPT-4o, GPT-4o-mini, etc.)
-- Strong multimodal support for images and audio
-- Works out of the box with `OPENAI_API_KEY`
-
-**Cons:**
-- Requires API key and internet
-- Usage costs apply based on model selection
-- Data sent to OpenAI servers
-
 ### ⚠️ Important Notes
 
 1. **Closing the App**: 
@@ -127,7 +65,7 @@ The built app will be in the `release` folder.
      # Kill them (replace [PID] with the process ID)
      kill [PID]
      ```
-   - For Ollama users: Make sure Ollama is running (`ollama serve`)
+   - Ensure your REST backend is reachable (defaults to `http://localhost:5000`)
 
 3. **Keyboard Shortcuts**:
    - `Cmd/Ctrl + B`: Toggle window visibility
@@ -177,36 +115,11 @@ If you see other errors:
 
 ## Key Features
 
-### **Invisible AI Assistant**
-- Translucent, always-on-top window that's barely noticeable
-- Hide/show instantly with global hotkeys
-- Works seamlessly across all applications
-
-### **Smart Screenshot Analysis** 
-- Take screenshots of any content with `Cmd/Ctrl + H`
-- AI analyzes images, documents, presentations, or problems
-- Get instant explanations, answers, and solutions
-
-### **Audio Intelligence**
-- Process audio files and recordings
-- Real-time transcription and analysis
-- Perfect for meeting notes and content review
-
-### **Contextual Chat**
-- Chat with AI about anything you see on screen
-- Maintains conversation context
-- Ask follow-up questions for deeper insights
-
-### **Privacy-First Design**
-- **Local AI Option**: Use Ollama for 100% private processing
-- **Cloud Option**: Google Gemini for maximum performance
-- Screenshots auto-deleted after processing
-- No data tracking or storage
-
-### **Cross-Platform Support**
-- **Windows 10/11** - Full support with native performance
-- **Ubuntu/Linux** - Optimized for all major distributions  
-- **macOS** - Native window management and shortcuts
+- **Floating Command Bar** – Always-on-top interface that keeps agent controls within reach without blocking your workspace.
+- **Screenshot Queue Management** – Capture, preview, and prune queued screenshots with keyboard shortcuts and a compact gallery.
+- **REST Agent Bridge** – Sends REST calls (`/api/chat`, `/api/pause`, `/api/resume`, `/api/stop`) through the bundled proxy so you can drive any backend workflow.
+- **Live Status Updates** – Listens for `/api/currentaction` webhooks and streams updates into the command bar and history view.
+- **Toast Notifications & Shortcuts** – Built-in feedback, queue reset tooling, and window positioning shortcuts for quick control.
 
 ## Use Cases
 
@@ -234,33 +147,6 @@ If you see other errors:
 ✓ Algorithm and architecture guidance
 ```
 
-## Why Choose Free Cluely?
-
-| Feature | Free Cluely | Commercial Alternatives |
-|---------|-------------|------------------------|
-| **Cost** | 100% Free | $29-99/month |
-| **Privacy** | Local AI Option | Cloud-only |
-| **Open Source** | Full transparency | Closed source |
-| **Customization** | Fully customizable | Limited options |
-| **Data Control** | You own your data | Third-party servers |
-| **Offline Mode** | Yes (with Ollama) | No |
-
-## Technical Details
-
-### **AI Models Supported**
-- **Gemini 2.0 Flash** - Latest Google AI with vision capabilities
-- **Llama 3.2** - Meta's advanced local model via Ollama
-- **CodeLlama** - Specialized coding assistance
-- **Mistral** - Lightweight, fast responses
-- **Custom Models** - Any Ollama-compatible model
-
-### **System Requirements**
-```bash
-Minimum:  4GB RAM, Dual-core CPU, 2GB storage
-Recommended: 8GB+ RAM, Quad-core CPU, 5GB+ storage
-Optimal: 16GB+ RAM for local AI models
-```
-
 ## 🤝 Contributing
 
 This project welcomes contributions! While I have limited time for active maintenance, I'll review and merge quality PRs.
@@ -283,4 +169,4 @@ ISC License - Free for personal and commercial use.
 **⭐ Star this repo if Free Cluely helps you succeed in meetings, interviews, or presentations!**
 
 ### 🏷️ Tags
-`ai-assistant` `meeting-notes` `interview-helper` `presentation-support` `ollama` `gemini-ai` `electron-app` `cross-platform` `privacy-focused` `open-source` `local-ai` `screenshot-analysis` `academic-helper` `sales-assistant` `coding-companion`
+`ai-assistant` `meeting-notes` `interview-helper` `presentation-support` `electron-app` `cross-platform` `open-source` `rest-api` `screenshot-management` `workflow-automation`

@@ -1,179 +1,298 @@
-import { createServer, IncomingMessage, ServerResponse, request } from 'http'
-import { AppState } from './main'
+import { createServer, IncomingMessage, ServerResponse, request } from "http";
+import { AppState } from "./main";
+import path from "path";
+import fs from "fs";
+
+type ForwardResponse = unknown;
+type ForwardHeaders = Record<string, string>;
 
 export class ApiServerHelper {
-  private server: ReturnType<typeof createServer> | null = null
-  private port: number = 3456
-  private agentServerUrl: string = 'http://localhost:5000' // Agent S server URL
+  private static envLoaded = false;
 
-  constructor(private appState: AppState) {}
+  private server: ReturnType<typeof createServer> | null = null;
+  private listenHost: string;
+  private listenPort: number;
+  private serverHost: string;
+  private serverPort: number;
 
-  // Forward request to Agent S server
-  private forwardToAgentServer(
-    method: string,
-    path: string,
-    body: string,
-    callback: (error: Error | null, response?: any) => void
-  ) {
-    const url = new URL(path, this.agentServerUrl)
-    const options = {
-      hostname: url.hostname,
-      port: url.port,
-      path: url.pathname,
-      method: method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body)
-      }
-    }
+  constructor(private appState: AppState) {
+    ApiServerHelper.ensureEnvLoaded();
 
-    const req = request(options, (res) => {
-      let responseData = ''
+    this.listenHost = process.env.UI_HOST || "127.0.0.1";
+    this.listenPort = Number(process.env.UI_PORT || 8002);
+    this.serverHost = process.env.SERVER_HOST || "127.0.0.1";
+    this.serverPort = Number(process.env.SERVER_PORT || 8003);
+  }
 
-      res.on('data', (chunk) => {
-        responseData += chunk.toString()
-      })
+  private static ensureEnvLoaded(): void {
+    if (ApiServerHelper.envLoaded) return;
 
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(responseData)
-          callback(null, parsed)
-        } catch (e) {
-          callback(null, { success: true, data: responseData })
+    const candidatePaths = [
+      path.resolve(process.cwd(), ".env"),
+      path.resolve(process.cwd(), "..", ".env"),
+      path.resolve(__dirname, "..", "..", ".env"),
+    ];
+
+    for (const envPath of candidatePaths) {
+      if (!fs.existsSync(envPath)) continue;
+
+      const contents = fs.readFileSync(envPath, "utf8");
+      contents.split(/\r?\n/).forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) return;
+
+        const separatorIndex = trimmed.indexOf("=");
+        if (separatorIndex === -1) return;
+
+        const key = trimmed.slice(0, separatorIndex).trim();
+        const rawValue = trimmed.slice(separatorIndex + 1).trim();
+        const value = rawValue.replace(/^['"]|['"]$/g, "");
+
+        if (!(key in process.env)) {
+          process.env[key] = value;
         }
-      })
-    })
+      });
 
-    req.on('error', (error) => {
-      console.error('Error forwarding to Agent S:', error)
-      callback(error)
-    })
-
-    if (body) {
-      req.write(body)
+      break;
     }
-    req.end()
+
+    ApiServerHelper.envLoaded = true;
   }
 
-  start() {
+  private forwardToServer(
+    method: string,
+    pathName: string,
+    body: string = "",
+    headers: ForwardHeaders = {}
+  ): Promise<ForwardResponse> {
+    return new Promise((resolve, reject) => {
+      const requestBody = body ?? "";
+      const finalHeaders: ForwardHeaders = { ...headers };
+
+      if (requestBody.length > 0) {
+        if (!finalHeaders["Content-Type"]) {
+          finalHeaders["Content-Type"] = "application/json";
+        }
+        finalHeaders["Content-Length"] =
+          Buffer.byteLength(requestBody).toString();
+      }
+
+      const req = request(
+        {
+          hostname: this.serverHost,
+          port: this.serverPort,
+          path: pathName,
+          method,
+          headers: finalHeaders,
+        },
+        (res) => {
+          let responseData = "";
+
+          res.on("data", (chunk) => {
+            responseData += chunk.toString();
+          });
+
+          res.on("end", () => {
+            const statusCode = res.statusCode ?? 0;
+            const contentType = res.headers["content-type"] || "";
+
+            let parsed: ForwardResponse = responseData;
+            if (
+              responseData.length > 0 &&
+              /application\/json/i.test(contentType)
+            ) {
+              try {
+                parsed = JSON.parse(responseData);
+              } catch (error) {
+                console.warn(
+                  "Failed to parse JSON response from server:",
+                  error
+                );
+              }
+            }
+
+            if (statusCode >= 400) {
+              const message =
+                typeof parsed === "object" &&
+                parsed !== null &&
+                "error" in (parsed as Record<string, unknown>)
+                  ? String((parsed as Record<string, unknown>).error)
+                  : `Server responded with status ${statusCode}`;
+              reject(new Error(message));
+              return;
+            }
+
+            resolve(parsed);
+          });
+        }
+      );
+
+      req.on("error", (error) => {
+        console.error("Error forwarding to server:", error);
+        reject(error);
+      });
+
+      if (requestBody.length > 0) {
+        req.write(requestBody);
+      }
+
+      req.end();
+    });
+  }
+
+  public sendChat(prompt: string): Promise<ForwardResponse> {
+    const payload = JSON.stringify({ Prompt: prompt, prompt });
+    return this.forwardToServer("POST", "/api/chat", payload, {
+      "Content-Type": "application/json",
+    });
+  }
+
+  public pauseAgent(): Promise<ForwardResponse> {
+    return this.forwardToServer("GET", "/api/pause");
+  }
+
+  public resumeAgent(): Promise<ForwardResponse> {
+    return this.forwardToServer("GET", "/api/resume");
+  }
+
+  public stopAgent(): Promise<ForwardResponse> {
+    return this.forwardToServer("GET", "/api/stop");
+  }
+
+  start(): void {
     this.server = createServer((req: IncomingMessage, res: ServerResponse) => {
-      // Enable CORS
-      res.setHeader('Access-Control-Allow-Origin', '*')
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-      // Handle preflight
-      if (req.method === 'OPTIONS') {
-        res.writeHead(200)
-        res.end()
-        return
+      if (req.method === "OPTIONS") {
+        res.writeHead(200);
+        res.end();
+        return;
       }
 
-      // Handle POST /api/currentaction
-      if (req.method === 'POST' && req.url === '/api/currentaction') {
-        let body = ''
+      if (req.method === "POST" && req.url === "/api/currentaction") {
+        let body = "";
 
-        req.on('data', (chunk) => {
-          body += chunk.toString()
-        })
+        req.on("data", (chunk) => {
+          body += chunk.toString();
+        });
 
-        req.on('end', () => {
+        req.on("end", () => {
           try {
-            // Parse JSON body with original, mode, and message fields
-            const actionData = JSON.parse(body)
+            const actionData = JSON.parse(body);
+            console.log("Received current action:", actionData);
 
-            console.log('Received current action:', actionData)
-
-            // Send the full action data to the renderer process
-            const mainWindow = this.appState.getMainWindow()
+            const mainWindow = this.appState.getMainWindow();
             if (mainWindow) {
-              mainWindow.webContents.send('current-action-update', actionData)
+              mainWindow.webContents.send("current-action-update", actionData);
             }
 
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ success: true, received: actionData }))
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: true, received: actionData }));
           } catch (error) {
-            console.error('Error processing current action:', error)
-            res.writeHead(400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ success: false, error: 'Invalid request' }))
+            console.error("Error processing current action:", error);
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({ success: false, error: "Invalid request" })
+            );
           }
-        })
-      }
-      // Handle POST /api/chat - forward to Agent S
-      else if (req.method === 'POST' && req.url === '/api/chat') {
-        let body = ''
+        });
+      } else if (req.method === "POST" && req.url === "/api/chat") {
+        let body = "";
 
-        req.on('data', (chunk) => {
-          body += chunk.toString()
-        })
+        req.on("data", (chunk) => {
+          body += chunk.toString();
+        });
 
-        req.on('end', () => {
-          console.log('Forwarding chat message to Agent S:', body)
-          this.forwardToAgentServer('POST', '/api/chat', body, (error, response) => {
-            if (error) {
-              res.writeHead(500, { 'Content-Type': 'application/json' })
-              res.end(JSON.stringify({ success: false, error: error.message }))
-            } else {
-              res.writeHead(200, { 'Content-Type': 'application/json' })
-              res.end(JSON.stringify(response))
-            }
+        req.on("end", async () => {
+          try {
+            const response = await this.forwardToServer(
+              "POST",
+              "/api/chat",
+              body,
+              {
+                "Content-Type": "application/json",
+              }
+            );
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(response));
+          } catch (error: any) {
+            console.error("Error forwarding chat to server:", error);
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: error?.message || "Unknown error",
+              })
+            );
+          }
+        });
+      } else if (req.method === "GET" && req.url === "/api/stop") {
+        console.log("Forwarding stop request to server");
+        this.forwardToServer("GET", "/api/stop")
+          .then((response) => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(response));
           })
-        })
+          .catch((error: any) => {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: error?.message || "Unknown error",
+              })
+            );
+          });
+      } else if (req.method === "GET" && req.url === "/api/pause") {
+        console.log("Forwarding pause request to server");
+        this.forwardToServer("GET", "/api/pause")
+          .then((response) => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(response));
+          })
+          .catch((error: any) => {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: error?.message || "Unknown error",
+              })
+            );
+          });
+      } else if (req.method === "GET" && req.url === "/api/resume") {
+        console.log("Forwarding resume request to server");
+        this.forwardToServer("GET", "/api/resume")
+          .then((response) => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(response));
+          })
+          .catch((error: any) => {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: error?.message || "Unknown error",
+              })
+            );
+          });
+      } else {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Not found" }));
       }
-      // Handle GET /api/stop - forward to Agent S
-      else if (req.method === 'GET' && req.url === '/api/stop') {
-        console.log('Forwarding stop request to Agent S')
-        this.forwardToAgentServer('GET', '/api/stop', '', (error, response) => {
-          if (error) {
-            res.writeHead(500, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ success: false, error: error.message }))
-          } else {
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify(response))
-          }
-        })
-      }
-      // Handle GET /api/pause - forward to Agent S
-      else if (req.method === 'GET' && req.url === '/api/pause') {
-        console.log('Forwarding pause request to Agent S')
-        this.forwardToAgentServer('GET', '/api/pause', '', (error, response) => {
-          if (error) {
-            res.writeHead(500, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ success: false, error: error.message }))
-          } else {
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify(response))
-          }
-        })
-      }
-      // Handle GET /api/resume - forward to Agent S
-      else if (req.method === 'GET' && req.url === '/api/resume') {
-        console.log('Forwarding resume request to Agent S')
-        this.forwardToAgentServer('GET', '/api/resume', '', (error, response) => {
-          if (error) {
-            res.writeHead(500, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ success: false, error: error.message }))
-          } else {
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify(response))
-          }
-        })
-      }
-      else {
-        res.writeHead(404, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ error: 'Not found' }))
-      }
-    })
+    });
 
-    this.server.listen(this.port, () => {
-      console.log(`API server listening on http://localhost:${this.port}`)
-    })
+    this.server.listen(this.listenPort, this.listenHost, () => {
+      console.log(
+        `API bridge listening on http://${this.listenHost}:${this.listenPort}`
+      );
+    });
   }
 
-  stop() {
+  stop(): void {
     if (this.server) {
-      this.server.close()
-      this.server = null
+      this.server.close();
+      this.server = null;
     }
   }
 }

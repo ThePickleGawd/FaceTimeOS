@@ -134,8 +134,6 @@
     "wait-on": "^8.0.1"
   },
   "dependencies": {
-    "@google/genai": "^0.12.0",
-    "@google/generative-ai": "^0.2.1",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-toast": "^1.2.2",
     "axios": "^1.7.7",
@@ -144,7 +142,6 @@
     "diff": "^7.0.0",
     "form-data": "^4.0.1",
     "lucide-react": "^0.460.0",
-    "openai": "^4.104.0",
     "react": "^18.3.1",
     "react-code-blocks": "^0.1.6",
     "react-dom": "^18.3.1",

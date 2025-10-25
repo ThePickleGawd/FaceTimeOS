@@ -12,7 +12,7 @@ import {
   ToastTitle,
   ToastVariant
 } from "../components/ui/toast"
-import ExtraScreenshotsQueueHelper from "../components/Solutions/SolutionCommands"
+import SolutionCommands from "../components/Solutions/SolutionCommands"
 import { diffLines } from "diff"
 
 type DiffLine = {
@@ -222,8 +222,6 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
     variant: "neutral"
   })
 
-  const [isTooltipVisible, setIsTooltipVisible] = useState(false)
-  const [tooltipHeight, setTooltipHeight] = useState(0)
 
   const { data: extraScreenshots = [], refetch } = useQuery({
     queryKey: ["extras"],
@@ -311,11 +309,8 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
     // Set up resize observer
     const updateDimensions = () => {
       if (contentRef.current) {
-        let contentHeight = contentRef.current.scrollHeight
+        const contentHeight = contentRef.current.scrollHeight
         const contentWidth = contentRef.current.scrollWidth
-        if (isTooltipVisible) {
-          contentHeight += tooltipHeight
-        }
         window.electronAPI.updateContentDimensions({
           width: contentWidth,
           height: contentHeight
@@ -334,11 +329,6 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
       cleanupFunctions.forEach((cleanup) => cleanup())
     }
   }, [queryClient])
-
-  const handleTooltipVisibilityChange = (visible: boolean, height: number) => {
-    setIsTooltipVisible(visible)
-    setTooltipHeight(height)
-  }
 
   return (
     <div ref={contentRef} className="relative space-y-3 px-4 py-3 ">
@@ -365,11 +355,8 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
         </div>
       </div>
 
-      {/* Navbar of commands with the tooltip */}
-      <ExtraScreenshotsQueueHelper
-        extraScreenshots={extraScreenshots}
-        onTooltipVisibilityChange={handleTooltipVisibilityChange}
-      />
+      {/* Navbar of commands */}
+      <SolutionCommands />
 
       {/* Main Content */}
       <div className="w-full text-sm text-black bg-black/60 rounded-md">
