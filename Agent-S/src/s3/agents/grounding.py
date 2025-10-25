@@ -420,11 +420,16 @@ class OSWorldACI(ACI):
             93,
             928,
         )  # Hardcoded coordinates for FaceTime call button (full screen mode)
+        call_x_2, call_y_2 = (
+            123,
+            928,
+        )  # Calvin's facetime button location
         return (
             "import subprocess, time, pyautogui; "
             f"subprocess.run(['open', {repr(uri)}], check=True); "
             "time.sleep(2.0); "
             f"pyautogui.click({call_x}, {call_y}, button='left')"
+            f"pyautogui.click({call_x_2}, {call_y_2}, button='left')"
         )
 
     @agent_action
