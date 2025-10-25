@@ -15,9 +15,9 @@ import pyautogui
 from PIL import Image
 from flask import Flask, Request, jsonify, request
 
-from gui_agents.s3.agents.agent_s import AgentS3
-from gui_agents.s3.agents.grounding import OSWorldACI
-from gui_agents.s3.utils.local_env import LocalEnv
+from src.s3.agents.agent_s import AgentS3
+from src.s3.agents.grounding import OSWorldACI
+from src.s3.utils.local_env import LocalEnv
 
 current_platform = platform.system().lower()
 
@@ -110,7 +110,9 @@ def show_permission_dialog(code: str, action_description: str) -> bool:
     return False
 
 
-def scale_screen_dimensions(width: int, height: int, max_dim_size: int) -> Tuple[int, int]:
+def scale_screen_dimensions(
+    width: int, height: int, max_dim_size: int
+) -> Tuple[int, int]:
     scale_factor = min(max_dim_size / width, max_dim_size / height, 1)
     safe_width = int(width * scale_factor)
     safe_height = int(height * scale_factor)
@@ -125,7 +127,9 @@ def _wait_if_paused() -> bool:
     return False
 
 
-def run_agent(agent: AgentS3, instruction: str, scaled_width: int, scaled_height: int) -> None:
+def run_agent(
+    agent: AgentS3, instruction: str, scaled_width: int, scaled_height: int
+) -> None:
     obs = {}
     traj = "Task:\n" + instruction
     subtask_traj = ""
@@ -148,7 +152,9 @@ def run_agent(agent: AgentS3, instruction: str, scaled_width: int, scaled_height
             LOGGER.debug("Stop requested before prediction step %d", step + 1)
             break
         if not _wait_if_paused():
-            LOGGER.debug("Stop requested while paused before prediction step %d", step + 1)
+            LOGGER.debug(
+                "Stop requested while paused before prediction step %d", step + 1
+            )
             break
 
         LOGGER.info("🔄 Step %d/15: Getting next action from agent...", step + 1)
@@ -189,7 +195,9 @@ def run_agent(agent: AgentS3, instruction: str, scaled_width: int, scaled_height
             LOGGER.debug("Stop requested before executing code at step %d", step + 1)
             break
         if not _wait_if_paused():
-            LOGGER.debug("Stop requested while paused before executing code at step %d", step + 1)
+            LOGGER.debug(
+                "Stop requested while paused before executing code at step %d", step + 1
+            )
             break
 
         exec(code[0])
@@ -341,7 +349,9 @@ def resume():
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run AgentS3 server with specified model.")
+    parser = argparse.ArgumentParser(
+        description="Run AgentS3 server with specified model."
+    )
     parser.add_argument(
         "--provider",
         type=str,
@@ -388,7 +398,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--ground_api_key",
         type=str,
         default=os.environ.get("OPENAI_API_KEY", ""),
-        help='The API key of the grounding model (defaults to $OPENAI_API_KEY if set).',
+        help="The API key of the grounding model (defaults to $OPENAI_API_KEY if set).",
     )
     parser.add_argument(
         "--ground_model",
@@ -451,7 +461,9 @@ def configure_agent(args: argparse.Namespace) -> None:
     global AGENT, GROUNDING_AGENT, LOCAL_ENV, SCALED_DIMENSIONS
 
     screen_width, screen_height = pyautogui.size()
-    SCALED_DIMENSIONS = scale_screen_dimensions(screen_width, screen_height, max_dim_size=2400)
+    SCALED_DIMENSIONS = scale_screen_dimensions(
+        screen_width, screen_height, max_dim_size=2400
+    )
 
     engine_params = {
         "engine_type": args.provider,
@@ -471,7 +483,9 @@ def configure_agent(args: argparse.Namespace) -> None:
     }
 
     if args.enable_local_env:
-        LOGGER.warning("⚠️  Local coding environment enabled. This executes arbitrary code locally!")
+        LOGGER.warning(
+            "⚠️  Local coding environment enabled. This executes arbitrary code locally!"
+        )
         LOCAL_ENV = LocalEnv()
     else:
         LOCAL_ENV = None

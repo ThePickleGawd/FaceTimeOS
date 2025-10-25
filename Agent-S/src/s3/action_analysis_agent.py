@@ -22,18 +22,19 @@ from uagents_core.contrib.protocols.chat import (
 )
 
 # -------- Config --------
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-if not ANTHROPIC_API_KEY:
-    raise ValueError("Set ANTHROPIC_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("Set OPENAI_API_KEY")
 
-CLAUDE_URL = "https://api.anthropic.com/v1/messages"
-MODEL_ENGINE = os.getenv("MODEL_ENGINE", "claude-3-5-haiku-latest")
+OPENAI_URL = os.getenv(
+    "OPENAI_CHAT_URL", "https://api.openai.com/v1/chat/completions"
+)
+MODEL_ENGINE = os.getenv("MODEL_ENGINE", "gpt-5")
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "64"))
 
 HEADERS = {
-    "x-api-key": ANTHROPIC_API_KEY,
-    "anthropic-version": "2023-06-01",
-    "content-type": "application/json",
+    "Authorization": f"Bearer {OPENAI_API_KEY}",
+    "Content-Type": "application/json",
 }
 
 # Where Agentverse-hosted chat uploads are fetched
@@ -50,14 +51,11 @@ def summarize_action(
     history: list[str],
 ) -> str:
     """
-    Build a tiny prompt for Anthropic that enforces:
+    Build a tiny prompt for OpenAI GPT-5 that enforces:
     - one short line (<= 8 words)
     - uses prior trajectory for context
     - can include an image (base64) via 'resource' items
     """
-    processed_content: list[dict[str, Any]] = []
-
-    # Hard constraint instruction first
     system_rules = (
         "You generate a SINGLE ultra-brief action summary.\n"
         "- Max 8 words.\n"
@@ -65,41 +63,31 @@ def summarize_action(
         "- Prefer verbs. No preamble.\n"
         "- If unsure, say 'Action unclear'."
     )
-    # Anthropic's "system" goes in the top-level field; we emulate by prefixing text.
-    processed_content.append({"type": "text", "text": f"[Rules]\n{system_rules}"})
 
+    trajectory_text = ""
     if history:
-        processed_content.append(
-            {
-                "type": "text",
-                "text": "[Trajectory]\n"
-                + "\n".join(f"- {s}" for s in history[-TRAJECTORY_LEN:]),
-            }
+        trajectory_text = "\n[Trajectory]\n" + "\n".join(
+            f"- {s}" for s in history[-TRAJECTORY_LEN:]
         )
+
+    user_parts: list[dict[str, Any]] = []
 
     # Current thoughts + optional image(s)
     for item in content:
         if item.get("type") == "text":
-            processed_content.append(
-                {"type": "text", "text": "[Current]\n" + item["text"]}
-            )
+            user_parts.append({"type": "text", "text": "[Current]\n" + item["text"]})
         elif item.get("type") == "resource":
             mime_type = item.get("mime_type", "")
             if mime_type.startswith("image/"):
-                processed_content.append(
+                data_url = f"data:{mime_type};base64,{item['contents']}"
+                user_parts.append(
                     {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": mime_type,
-                            "data": item[
-                                "contents"
-                            ],  # base64 string from Agentverse storage
-                        },
+                        "type": "image_url",
+                        "image_url": {"url": data_url},
                     }
                 )
             else:
-                processed_content.append(
+                user_parts.append(
                     {
                         "type": "text",
                         "text": f"[Note] Unsupported mime type: {mime_type}",
@@ -109,20 +97,33 @@ def summarize_action(
     data = {
         "model": MODEL_ENGINE,
         "max_tokens": MAX_TOKENS,
-        "messages": [{"role": "user", "content": processed_content}],
+        "messages": [
+            {"role": "system", "content": system_rules + trajectory_text},
+            {"role": "user", "content": user_parts or [{"type": "text", "text": ""}]},
+        ],
     }
 
     try:
-        resp = requests.post(
-            CLAUDE_URL, headers=HEADERS, data=json.dumps(data), timeout=60
-        )
+        resp = requests.post(OPENAI_URL, headers=HEADERS, data=json.dumps(data), timeout=60)
         resp.raise_for_status()
     except requests.exceptions.RequestException as e:
         return "Action unclear"
 
     payload = resp.json()
-    chunks = payload.get("content", [])
-    text = chunks[0].get("text", "").strip() if chunks else ""
+    choices = payload.get("choices", [])
+    if not choices:
+        return "Action unclear"
+
+    message = choices[0].get("message", {})
+    content = message.get("content", "")
+    if isinstance(content, list):
+        text = "".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        ).strip()
+    else:
+        text = str(content).strip()
 
     # Enforce the 8-word cap defensively
     words = text.split()
