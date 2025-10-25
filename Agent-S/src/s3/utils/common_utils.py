@@ -5,7 +5,7 @@ from PIL import Image
 
 from typing import Tuple, Dict
 
-from gui_agents.s3.memory.procedural_memory import PROCEDURAL_MEMORY
+from src.s3.memory.procedural_memory import PROCEDURAL_MEMORY
 
 import logging
 

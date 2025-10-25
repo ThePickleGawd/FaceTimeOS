@@ -3,17 +3,17 @@ import logging
 import textwrap
 from typing import Dict, List, Tuple
 
-from gui_agents.s3.agents.grounding import ACI
-from gui_agents.s3.core.module import BaseModule
-from gui_agents.s3.memory.procedural_memory import PROCEDURAL_MEMORY
-from gui_agents.s3.utils.common_utils import (
+from src.s3.agents.grounding import ACI
+from src.s3.core.module import BaseModule
+from src.s3.memory.procedural_memory import PROCEDURAL_MEMORY
+from src.s3.utils.common_utils import (
     call_llm_safe,
     call_llm_formatted,
     parse_code_from_string,
     split_thinking_response,
     create_pyautogui_code,
 )
-from gui_agents.s3.utils.formatters import (
+from src.s3.utils.formatters import (
     SINGLE_ACTION_FORMATTER,
     CODE_VALID_FORMATTER,
 )

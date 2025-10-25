@@ -1,6 +1,6 @@
 """This file contains various formatting checks used to reprompt an agent for correctly formatted responses."""
 
-from gui_agents.s3.utils.common_utils import (
+from src.s3.utils.common_utils import (
     extract_agent_functions,
     parse_code_from_string,
     create_pyautogui_code,

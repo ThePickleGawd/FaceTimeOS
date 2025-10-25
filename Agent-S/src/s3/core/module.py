@@ -1,5 +1,5 @@
 from typing import Dict, Optional
-from gui_agents.s3.core.mllm import LMMAgent
+from src.s3.core.mllm import LMMAgent
 
 
 class BaseModule:

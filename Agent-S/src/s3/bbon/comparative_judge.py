@@ -2,9 +2,9 @@ import os
 import base64
 from typing import List, Tuple, Optional, List
 
-from gui_agents.s3.core.mllm import LMMAgent
-from gui_agents.s3.memory.procedural_memory import PROCEDURAL_MEMORY
-from gui_agents.s3.utils.common_utils import call_llm_formatted, split_thinking_response
+from src.s3.core.mllm import LMMAgent
+from src.s3.memory.procedural_memory import PROCEDURAL_MEMORY
+from src.s3.utils.common_utils import call_llm_formatted, split_thinking_response
 
 
 def get_final_screenshot_file(task_dir: str) -> str:
