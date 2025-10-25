@@ -66,7 +66,7 @@ def summarize_action(
             "- Max 50 characters.\n"
             "- No emojis. Keep concrete and clear.\n"
             "- Avoid filler words. No preamble.\n"
-            "- If unsure, then simply summarize the message you are given."
+            "- If unsure, respond with 'Thinking...'."
         )
         char_limit = 50
         enforce_word_cap = False
@@ -76,7 +76,7 @@ def summarize_action(
             "- Aim for <= 160 characters.\n"
             "- Friendly but concise tone.\n"
             "- No emojis.\n"
-            "- If unsure, say summarize the message you are given in a natural voice"
+            "- If unsure, respond with 'Thinking...'."
         )
         char_limit = 160
         enforce_word_cap = False
@@ -86,7 +86,7 @@ def summarize_action(
             "- Max 8 words.\n"
             "- No emojis. Keep concrete.\n"
             "- Prefer verbs. No preamble.\n"
-            "- If unsure, say 'Thinking...'."
+            "- If unsure, respond with 'Thinking...'."
         )
         char_limit = None
         enforce_word_cap = True
@@ -135,13 +135,13 @@ def summarize_action(
             OPENAI_URL, headers=HEADERS, data=json.dumps(data), timeout=60
         )
         resp.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        return "Action unclear"
+    except requests.exceptions.RequestException:
+        return "Thinking..."
 
     payload = resp.json()
     choices = payload.get("choices", [])
     if not choices:
-        return "Action unclear"
+        return "Thinking..."
 
     message = choices[0].get("message", {})
     content = message.get("content", "")
@@ -163,9 +163,9 @@ def summarize_action(
     if char_limit and len(text) > char_limit:
         text = text[:char_limit].rstrip()
 
-    # If the model returns blank, be deterministic
+    # If the model returns blank, provide a fallback
     if not text:
-        text = "Action unclear"
+        text = "Thinking..."
 
     return text
 
