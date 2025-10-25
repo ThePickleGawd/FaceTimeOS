@@ -66,7 +66,7 @@ def summarize_action(
             "- Max 50 characters.\n"
             "- No emojis. Keep concrete and clear.\n"
             "- Avoid filler words. No preamble.\n"
-            "- If unsure, respond with 'Thinking...'."
+            "- If unsure, respond with 'Thinking'."
         )
         char_limit = 50
         enforce_word_cap = False
@@ -76,7 +76,7 @@ def summarize_action(
             "- Aim for <= 160 characters.\n"
             "- Friendly but concise tone.\n"
             "- No emojis.\n"
-            "- If unsure, respond with 'Thinking...'."
+            "- If unsure, respond with 'Thinking'."
         )
         char_limit = 160
         enforce_word_cap = False
@@ -86,7 +86,7 @@ def summarize_action(
             "- Max 8 words.\n"
             "- No emojis. Keep concrete.\n"
             "- Prefer verbs. No preamble.\n"
-            "- If unsure, respond with 'Thinking...'."
+            "- If unsure, respond with 'Thinking'."
         )
         char_limit = None
         enforce_word_cap = True
@@ -136,12 +136,12 @@ def summarize_action(
         )
         resp.raise_for_status()
     except requests.exceptions.RequestException:
-        return "Thinking..."
+        return "Thinking"
 
     payload = resp.json()
     choices = payload.get("choices", [])
     if not choices:
-        return "Thinking..."
+        return "Thinking"
 
     message = choices[0].get("message", {})
     content = message.get("content", "")
@@ -165,7 +165,7 @@ def summarize_action(
 
     # If the model returns blank, provide a fallback
     if not text:
-        text = "Thinking..."
+        text = "Thinking"
 
     return text
 
