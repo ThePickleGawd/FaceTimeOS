@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import base64
+import io
 import logging
 import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 from dotenv import load_dotenv
+
+import audio
 
 
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
@@ -27,7 +31,6 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 LOG_LEVEL = os.getenv("BACKEND_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-
 
 app = Flask(__name__)
 
@@ -84,6 +87,9 @@ imessage_bridge_client = RemoteClient(base_url=IMESSAGE_BRIDGE_BASE_URL, timeout
 
 class ScreenshotError(RuntimeError):
 	pass
+
+
+_last_requester_phone: Optional[str] = None
 
 
 def capture_screenshot() -> str:
@@ -143,21 +149,52 @@ def complete_task():
 	payload = request.get_json(silent=True) or {}
 	logging.info("Received complete task payload: %s", payload)
 
+	phone_number = _last_requester_phone
+	if not phone_number:
+		logging.warning("No phone number available for task completion notification")
+		return jsonify({"error": "phone_number unavailable"}), 400
+	phone_number = phone_number.strip()
+
 	try:
 		screenshot_b64 = capture_screenshot()
 	except ScreenshotError as exc:
 		logging.exception("Screenshot capture failed")
 		return jsonify({"error": str(exc)}), 500
 
-	forward_payload: Dict[str, Any] = {
-		**payload,
-		"screenshot": screenshot_b64,
-	}
-	response = _safe_post(ui_client, "/api/completetask", forward_payload)
-	if response is None:
-		return jsonify({"status": "queued", "ui_forwarded": False}), 202
+	action_text = payload.get("action")
+	if action_text is not None and not isinstance(action_text, str):
+		action_text = str(action_text)
 
-	return _forward_response(response)
+	status = payload.get("status")
+	message_parts = []
+	if isinstance(status, str) and status.strip():
+		message_parts.append(f"Task {status.strip()}")
+	if action_text and action_text.strip():
+		message_parts.append(action_text.strip())
+	message_text = "\n".join(message_parts) if message_parts else "Task update"
+
+	temp_dir = Path(tempfile.gettempdir())
+	attachment_path = temp_dir / f"agent_s_task_{uuid4().hex}.png"
+	try:
+		attachment_path.write_bytes(base64.b64decode(screenshot_b64))
+	except (ValueError, OSError) as exc: 
+		return jsonify({"error": f"Unable to prepare screenshot: {exc}"}), 500
+
+	try:
+		forward_payload = {
+			"target": phone_number,
+			"text": message_text,
+			"attachments": [str(attachment_path)],
+		}
+		response = _safe_post(imessage_bridge_client, "/api/send_imessage", forward_payload)
+		if response is None:
+			return jsonify({"status": "failed", "bridge_forwarded": False}), 502
+		return _forward_response(response)
+	finally:
+		try:
+			attachment_path.unlink(missing_ok=True)
+		except OSError:
+			logging.warning("Could not delete temporary attachment %s", attachment_path)
 
 
 @app.route("/api/currentaction", methods=["POST"])
@@ -228,6 +265,11 @@ def send_imessage_endpoint() -> Any:
 def new_imessage() -> Any:
 	payload = request.get_json(silent=True) or {}
 	logging.info("New iMessage payload: %s", payload)
+
+	phone_number = payload.get("phone_number")
+	if isinstance(phone_number, str) and phone_number.strip():
+		global _last_requester_phone
+		_last_requester_phone = phone_number.strip()
 	
 	# Forward to agent_s for LLM processing
 	forward_payload: Dict[str, Any] = {
@@ -264,6 +306,51 @@ def pause():
 def resume():
 	logging.info("Received resume command from UI")
 	return _proxy_command("/api/resume")
+
+
+@app.route("/api/audio/transcribe", methods=["POST"])
+def transcribe() -> Response:
+	"""Transcribe raw audio bytes sent in the request body via fish.audio ASR."""
+	audio_bytes = request.get_data(cache=False)
+	if not audio_bytes:
+		return jsonify({"error": "Request body must contain audio bytes"}), HTTPStatus.BAD_REQUEST
+
+	language = request.args.get("language")
+	
+	try:
+		transcript = audio.transcribe_audio_bytes(audio_bytes, language=language)
+		return jsonify({"text": transcript}), HTTPStatus.OK
+	except audio.FishAudioError as exc:
+		logging.error("fish.audio error: %s", exc)
+		return jsonify({"error": str(exc)}), HTTPStatus.BAD_GATEWAY
+	except ValueError as exc:
+		return jsonify({"error": str(exc)}), HTTPStatus.BAD_REQUEST
+
+
+@app.route("/api/audio/synthesize", methods=["POST"])
+def synthesize() -> Response:
+	"""Synthesize speech for the provided text via fish.audio TTS."""
+	payload = request.get_json(silent=True) or {}
+	text = payload.get("text")
+	
+	if not text:
+		return jsonify({"error": "JSON body with 'text' field is required"}), HTTPStatus.BAD_REQUEST
+
+	voice = payload.get("voice")
+	audio_format = payload.get("audio_format")
+
+	try:
+		audio_bytes = audio.synthesize_speech_from_text(str(text), voice=voice, audio_format=audio_format)
+		content_type = audio.AUDIO_FORMAT_CONTENT_TYPES.get(
+			str(audio_format).lower() if audio_format else "",
+			audio.DEFAULT_AUDIO_CONTENT_TYPE
+		)
+		return Response(io.BytesIO(audio_bytes).getvalue(), mimetype=content_type)
+	except audio.FishAudioError as exc:
+		logging.error("fish.audio error: %s", exc)
+		return jsonify({"error": str(exc)}), HTTPStatus.BAD_GATEWAY
+	except ValueError as exc:
+		return jsonify({"error": str(exc)}), HTTPStatus.BAD_REQUEST
 
 
 if __name__ == "__main__":
