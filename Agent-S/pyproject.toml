@@ -1,0 +1,46 @@
+[project]
+name = "gui-agents"
+version = "0.3.1"
+description = "A library for creating general purpose GUI agents using multimodal LLMs."
+readme = "README.md"
+authors = [
+    { name = "Simular AI", email = "eric@simular.ai" },
+    { name = "Dylan Lu", email = "dylanelu@gmail.com" },
+]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9, <=3.12"
+keywords = ["ai", "llm", "gui", "agent", "multimodal"]
+
+dependencies = [
+    "numpy",
+    "backoff",
+    "pandas",
+    "openai",
+    "anthropic",
+    "fastapi",
+    "uvicorn",
+    "paddleocr",
+    "paddlepaddle",
+    "together",
+    "scikit-learn",
+    "websockets",
+    "tiktoken",
+    "selenium",
+    "pyautogui",
+    "toml",
+    "pytesseract",
+    "google-genai",
+    'pyobjc; platform_system == "Darwin"',
+    'pywinauto; platform_system == "Windows"',
+    'pywin32; platform_system == "Windows"',
+]
+
+[project.optional-dependencies]
+dev = ["black"]
+
+[project.scripts]
+agent_s = "gui_agents.s3.cli_app:main"
+
+[tool.setuptools.packages.find]
+include = ["gui_agents*"]
+exclude = ["tests*", "images*", "logs*"]
