@@ -1,11 +1,11 @@
-from gui_agents.s3.core.mllm import LMMAgent
-from gui_agents.s3.memory.procedural_memory import PROCEDURAL_MEMORY
-from gui_agents.s3.utils.common_utils import (
+from src.s3.core.mllm import LMMAgent
+from src.s3.memory.procedural_memory import PROCEDURAL_MEMORY
+from src.s3.utils.common_utils import (
     call_llm_formatted,
     split_thinking_response,
     compress_image,
 )
-from gui_agents.s3.utils.formatters import (
+from src.s3.utils.formatters import (
     THOUGHTS_ANSWER_TAG_FORMATTER,
 )
 from PIL import Image, ImageDraw, ImageFont

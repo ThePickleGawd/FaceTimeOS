@@ -9,15 +9,22 @@ import platform
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, Tuple
 
 import pyautogui
 from PIL import Image
 from flask import Flask, Request, jsonify, request
+import requests
 
-from gui_agents.s3.agents.agent_s import AgentS3
-from gui_agents.s3.agents.grounding import OSWorldACI
-from gui_agents.s3.utils.local_env import LocalEnv
+try:
+    from src.s3.action_analysis_agent import summarize_action
+except Exception:  # pragma: no cover - summarizer optional
+    summarize_action = None
+
+from src.s3.agents.agent_s import AgentS3
+from src.s3.agents.grounding import OSWorldACI
+from src.s3.utils.local_env import LocalEnv
 
 current_platform = platform.system().lower()
 
@@ -49,6 +56,120 @@ AGENT: Optional[AgentS3] = None
 GROUNDING_AGENT: Optional[OSWorldACI] = None
 LOCAL_ENV: Optional[LocalEnv] = None
 SCALED_DIMENSIONS: Tuple[int, int] = (0, 0)
+
+
+def _load_env_config() -> dict:
+    env_path = Path(__file__).resolve().parents[3] / ".env"
+    config: dict[str, str] = {}
+    if not env_path.exists():
+        return config
+    with env_path.open("r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            config[key.strip()] = value.strip()
+    return config
+
+
+def _normalize_host(host: str) -> str:
+    host = host.strip()
+    if host in {"", "0.0.0.0"}:
+        return "127.0.0.1"
+    return host
+
+
+ENV_CONFIG = _load_env_config()
+SERVER_HOST = _normalize_host(ENV_CONFIG.get("SERVER_HOST", "127.0.0.1"))
+SERVER_PORT = ENV_CONFIG.get("SERVER_PORT", "8000")
+CURRENT_ACTION_URL = f"http://{SERVER_HOST}:{SERVER_PORT}/api/currentaction"
+
+NOTIFICATION_MODE_RAW = os.getenv(
+    "NOTIFICATION_MODE",
+    ENV_CONFIG.get("NOTIFICATION_MODE", "text"),
+).lower()
+if NOTIFICATION_MODE_RAW in {"text-display", "display"}:
+    NOTIFICATION_MODE = "text"
+elif NOTIFICATION_MODE_RAW in {"voice", "spoken"}:
+    NOTIFICATION_MODE = "voice"
+elif NOTIFICATION_MODE_RAW == "both":
+    NOTIFICATION_MODE = "both"
+else:
+    NOTIFICATION_MODE = "text"
+
+
+def _summarize_message(message: str, style: str) -> Optional[str]:
+    if summarize_action is None:
+        return None
+    try:
+        style_hint = "voice" if style == "notification_voice" else "display"
+        prompt = f"Summarize this agent log for {style_hint} output:\n{message}"
+        return summarize_action(
+            [{"type": "text", "text": prompt}],
+            [],
+            summary_style=style,
+        )
+    except Exception:
+        return None
+
+
+def _limit_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _build_notification_payload(message: str) -> dict[str, object]:
+    mode = NOTIFICATION_MODE
+    payload: dict[str, object] = {"original": message, "mode": mode}
+
+    text_summary = _summarize_message(message, "notification_text")
+
+    if mode == "voice":
+        voice_summary = _summarize_message(message, "notification_voice")
+        payload["message"] = voice_summary or message
+        if text_summary:
+            payload["display"] = _limit_text(text_summary, 50)
+        else:
+            payload["display"] = _limit_text(message, 50)
+        return payload
+
+    if mode == "both":
+        payload["message"] = _limit_text(text_summary or message, 50)
+        voice_summary = _summarize_message(message, "notification_voice")
+        payload["voice_message"] = voice_summary or message
+        payload["display"] = payload["message"]
+        return payload
+
+    # text mode (default)
+    if not text_summary:
+        payload["message"] = _limit_text(message, 50)
+    else:
+        payload["message"] = _limit_text(text_summary, 50)
+
+    return payload
+
+
+def notify_current_action(message: Optional[str] = None) -> None:
+    if not CURRENT_ACTION_URL:
+        return
+
+    payload: dict[str, object]
+    if isinstance(message, str) and len(message) > 50:
+        payload = _build_notification_payload(message)
+    else:
+        payload = {"message": message or "", "mode": NOTIFICATION_MODE}
+        if isinstance(message, str):
+            payload["original"] = message
+
+    try:
+        requests.post(CURRENT_ACTION_URL, json=payload, timeout=2)
+    except requests.RequestException:
+        pass
+
 
 ROOT_LOGGER = logging.getLogger()
 if not ROOT_LOGGER.handlers:
@@ -90,7 +211,23 @@ if not ROOT_LOGGER.handlers:
     ROOT_LOGGER.addHandler(stdout_handler)
     ROOT_LOGGER.addHandler(sdebug_handler)
 
-LOGGER = logging.getLogger(__name__)
+
+class CurrentActionHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        notify_current_action(record.getMessage())
+
+
+LOGGER = logging.getLogger("desktopenv.agent")
+LOGGER.setLevel(logging.DEBUG)
+if not any(isinstance(handler, CurrentActionHandler) for handler in LOGGER.handlers):
+    handler = CurrentActionHandler()
+    handler.setLevel(logging.DEBUG)
+    LOGGER.addHandler(handler)
+
+
+def log_debug(message: str) -> None:
+    """Emit a debug log that also triggers the current-action notifier."""
+    LOGGER.debug(message)
 
 
 def show_permission_dialog(code: str, action_description: str) -> bool:
@@ -110,7 +247,9 @@ def show_permission_dialog(code: str, action_description: str) -> bool:
     return False
 
 
-def scale_screen_dimensions(width: int, height: int, max_dim_size: int) -> Tuple[int, int]:
+def scale_screen_dimensions(
+    width: int, height: int, max_dim_size: int
+) -> Tuple[int, int]:
     scale_factor = min(max_dim_size / width, max_dim_size / height, 1)
     safe_width = int(width * scale_factor)
     safe_height = int(height * scale_factor)
@@ -125,10 +264,10 @@ def _wait_if_paused() -> bool:
     return False
 
 
-def run_agent(agent: AgentS3, instruction: str, scaled_width: int, scaled_height: int) -> None:
+def run_agent(
+    agent: AgentS3, instruction: str, scaled_width: int, scaled_height: int
+) -> None:
     obs = {}
-    traj = "Task:\n" + instruction
-    subtask_traj = ""
     for step in range(15):
         if STATE.stop_event.is_set():
             LOGGER.debug("Stop requested before step %d", step + 1)
@@ -148,7 +287,9 @@ def run_agent(agent: AgentS3, instruction: str, scaled_width: int, scaled_height
             LOGGER.debug("Stop requested before prediction step %d", step + 1)
             break
         if not _wait_if_paused():
-            LOGGER.debug("Stop requested while paused before prediction step %d", step + 1)
+            LOGGER.debug(
+                "Stop requested while paused before prediction step %d", step + 1
+            )
             break
 
         LOGGER.info("🔄 Step %d/15: Getting next action from agent...", step + 1)
@@ -189,7 +330,9 @@ def run_agent(agent: AgentS3, instruction: str, scaled_width: int, scaled_height
             LOGGER.debug("Stop requested before executing code at step %d", step + 1)
             break
         if not _wait_if_paused():
-            LOGGER.debug("Stop requested while paused before executing code at step %d", step + 1)
+            LOGGER.debug(
+                "Stop requested while paused before executing code at step %d", step + 1
+            )
             break
 
         exec(code[0])
@@ -341,7 +484,9 @@ def resume():
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run AgentS3 server with specified model.")
+    parser = argparse.ArgumentParser(
+        description="Run AgentS3 server with specified model."
+    )
     parser.add_argument(
         "--provider",
         type=str,
@@ -388,7 +533,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--ground_api_key",
         type=str,
         default=os.environ.get("OPENAI_API_KEY", ""),
-        help='The API key of the grounding model (defaults to $OPENAI_API_KEY if set).',
+        help="The API key of the grounding model (defaults to $OPENAI_API_KEY if set).",
     )
     parser.add_argument(
         "--ground_model",
@@ -451,7 +596,9 @@ def configure_agent(args: argparse.Namespace) -> None:
     global AGENT, GROUNDING_AGENT, LOCAL_ENV, SCALED_DIMENSIONS
 
     screen_width, screen_height = pyautogui.size()
-    SCALED_DIMENSIONS = scale_screen_dimensions(screen_width, screen_height, max_dim_size=2400)
+    SCALED_DIMENSIONS = scale_screen_dimensions(
+        screen_width, screen_height, max_dim_size=2400
+    )
 
     engine_params = {
         "engine_type": args.provider,
@@ -471,7 +618,9 @@ def configure_agent(args: argparse.Namespace) -> None:
     }
 
     if args.enable_local_env:
-        LOGGER.warning("⚠️  Local coding environment enabled. This executes arbitrary code locally!")
+        LOGGER.warning(
+            "⚠️  Local coding environment enabled. This executes arbitrary code locally!"
+        )
         LOCAL_ENV = LocalEnv()
     else:
         LOCAL_ENV = None
