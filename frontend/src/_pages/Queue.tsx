@@ -25,14 +25,12 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const contentRef = useRef<HTMLDivElement>(null)
 
   const [chatInput, setChatInput] = useState("")
-  const [chatMessages, setChatMessages] = useState<{role: "user"|"gemini", text: string}[]>([])
+  const [originalHistory, setOriginalHistory] = useState<string[]>([])
   const [chatLoading, setChatLoading] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
-  const chatInputRef = useRef<HTMLInputElement>(null)
   const chatMessagesEndRef = useRef<HTMLDivElement>(null)
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
   const [isAgentRunning, setIsAgentRunning] = useState(false)
-  const [isFirstUse, setIsFirstUse] = useState(true)
 
   const [currentModel, setCurrentModel] = useState<{ provider: string; model: string }>({ provider: "gemini", model: "gemini-2.0-flash" })
 
@@ -87,101 +85,118 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }
 
+  const handleTogglePopup = () => {
+    setIsChatOpen(!isChatOpen)
+  }
+
   const handleChatSubmit = async () => {
     if (!chatInput.trim()) return
 
-    // Add user message to chat
     const userMessage = chatInput
-    setChatMessages((msgs) => [...msgs, { role: "user", text: userMessage }])
     setChatLoading(true)
     setChatInput("")
 
-    // Start the agent (like clicking the Start button)
+    // Clear previous history and start fresh
+    setOriginalHistory([])
+
+    // Start the agent
     setIsAgentRunning(true)
-    setIsFirstUse(false)
 
-    // Start showing agent status (don't open popup yet)
+    // Start showing agent status
     setAgentStatus("Agent is thinking...")
-
-    // Add initial thinking message to chat (detailed)
-    setChatMessages((msgs) => [...msgs, {
-      role: "gemini",
-      text: "Let me think about how to help you with that..."
-    }])
 
     // Clear previous timeouts
     agentTimeoutsRef.current.forEach(clearTimeout)
     agentTimeoutsRef.current = []
 
-    // Simulate agent thinking process with status updates
-    // This would be replaced with actual agent status updates
-    const timeout1 = setTimeout(() => {
-      setAgentStatus("Agent is analyzing the task...")
-      setChatMessages((msgs) => [...msgs, {
-        role: "gemini",
-        text: "First, I need to understand what you're asking. Let me break down the task: " + userMessage
-      }])
-    }, 1000)
-    agentTimeoutsRef.current.push(timeout1)
-
-    const timeout2 = setTimeout(() => {
-      setAgentStatus("Agent is planning steps...")
-      setChatMessages((msgs) => [...msgs, {
-        role: "gemini",
-        text: "Now I'm thinking about the best approach. For this task, I would need to:\n1. Understand the specific requirements\n2. Determine what tools or applications to use\n3. Execute the steps in the right order"
-      }])
-    }, 2500)
-    agentTimeoutsRef.current.push(timeout2)
-
-    // Send message to LLM
+    // Send message to Agent S via POST /api/chat
+    // The actual status updates will come from POST /api/currentaction
     try {
-      const response = await window.electronAPI.invoke("gemini-chat", userMessage)
+      const response = await fetch('http://localhost:3456/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+        body: userMessage
+      })
 
-      // Simulate finding the solution
-      const timeout3 = setTimeout(() => {
-        setAgentStatus("Agent is executing...")
-        setChatMessages((msgs) => [...msgs, {
-          role: "gemini",
-          text: "Perfect! I found a solution. " + response
-        }])
-      }, 4000)
-      agentTimeoutsRef.current.push(timeout3)
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
 
-      // Complete the task
-      const timeout4 = setTimeout(() => {
+      // Agent will send status updates via the /api/currentaction endpoint
+      const data = await response.json()
+      console.log('Chat message sent to Agent S:', data)
+    } catch (err) {
+      console.error('Error sending chat message:', err)
+      setAgentStatus(null)
+      setChatLoading(false)
+      setIsAgentRunning(false)
+      setOriginalHistory((history) => [...history, `Error: ${String(err)}`])
+    }
+  }
+
+  const handlePauseAgent = async () => {
+    if (isAgentRunning) {
+      // Pause the agent - send pause request to Agent S
+      try {
+        const response = await fetch('http://localhost:3456/api/pause', {
+          method: 'GET'
+        })
+
+        if (response.ok) {
+          setIsAgentRunning(false)
+          setAgentStatus(null)
+          setChatLoading(false)
+
+          // Clear all pending timeouts
+          agentTimeoutsRef.current.forEach(clearTimeout)
+          agentTimeoutsRef.current = []
+
+          setOriginalHistory((history) => [...history, "Agent paused by user."])
+        }
+      } catch (err) {
+        console.error('Error pausing agent:', err)
+      }
+    } else {
+      // Resume the agent - send resume request to Agent S
+      try {
+        const response = await fetch('http://localhost:3456/api/resume', {
+          method: 'GET'
+        })
+
+        if (response.ok) {
+          setIsAgentRunning(true)
+          setAgentStatus("Resuming...")
+          setOriginalHistory((history) => [...history, "Agent resumed by user."])
+        }
+      } catch (err) {
+        console.error('Error resuming agent:', err)
+      }
+    }
+  }
+
+  const handleStopAgent = async () => {
+    // Stop the agent completely - send stop request to Agent S
+    try {
+      const response = await fetch('http://localhost:3456/api/stop', {
+        method: 'GET'
+      })
+
+      if (response.ok) {
+        setIsAgentRunning(false)
         setAgentStatus(null)
         setChatLoading(false)
-        setIsAgentRunning(false)
-      }, 5500)
-      agentTimeoutsRef.current.push(timeout4)
+
+        // Clear all pending timeouts
+        agentTimeoutsRef.current.forEach(clearTimeout)
+        agentTimeoutsRef.current = []
+
+        setOriginalHistory((history) => [...history, "Agent stopped by user."])
+      }
     } catch (err) {
-      setChatMessages((msgs) => [...msgs, { role: "gemini", text: "Error: " + String(err) }])
-      setAgentStatus(null)
-      setChatLoading(false)
-      setIsAgentRunning(false)
+      console.error('Error stopping agent:', err)
     }
-  }
-
-  const handlePauseAgent = () => {
-    if (isAgentRunning) {
-      // Pause the agent - stop all processing
-      setIsAgentRunning(false)
-      setAgentStatus(null)
-      setChatLoading(false)
-
-      // Clear all pending timeouts
-      agentTimeoutsRef.current.forEach(clearTimeout)
-      agentTimeoutsRef.current = []
-
-      setChatMessages((msgs) => [...msgs, {
-        role: "gemini",
-        text: "Agent paused by user."
-      }])
-    }
-  }
-
-  const handleBarClick = () => {
-    setIsChatOpen(!isChatOpen)
   }
 
   // Auto-scroll to bottom when new messages arrive
@@ -189,20 +204,17 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     if (isChatOpen && chatMessagesEndRef.current) {
       chatMessagesEndRef.current.scrollIntoView({ behavior: "smooth" })
     }
-  }, [chatMessages, isChatOpen])
+  }, [originalHistory, isChatOpen])
 
   // Listen for current action updates from Flask server
   useEffect(() => {
-    const unsubscribe = window.electronAPI.onCurrentActionUpdate((action: string) => {
-      // Update agent status with the current action
-      setAgentStatus(action)
+    const unsubscribe = window.electronAPI.onCurrentActionUpdate((action) => {
+      // Update agent status with the message (shown in bar)
+      setAgentStatus(action.message)
       setIsAgentRunning(true)
 
-      // Add detailed message to chat if open
-      setChatMessages((msgs) => [...msgs, {
-        role: "gemini",
-        text: action
-      }])
+      // Add the original text to history (shown in expanded view)
+      setOriginalHistory((history) => [...history, action.original])
     })
 
     return () => {
@@ -210,74 +222,6 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }, [])
 
-  const handleChatSend = async () => {
-    if (!chatInput.trim()) return
-
-    const userMessage = chatInput
-    setChatMessages((msgs) => [...msgs, { role: "user", text: userMessage }])
-    setChatLoading(true)
-    setChatInput("")
-
-    // Start the agent when sending from popup
-    setIsAgentRunning(true)
-    setAgentStatus("Agent is thinking...")
-
-    // Add initial thinking message
-    setChatMessages((msgs) => [...msgs, {
-      role: "gemini",
-      text: "Let me think about how to help you with that..."
-    }])
-
-    // Clear previous timeouts
-    agentTimeoutsRef.current.forEach(clearTimeout)
-    agentTimeoutsRef.current = []
-
-    // Status updates
-    const timeout1 = setTimeout(() => {
-      setAgentStatus("Agent is analyzing the task...")
-      setChatMessages((msgs) => [...msgs, {
-        role: "gemini",
-        text: "First, I need to understand what you're asking. Let me break down the task: " + userMessage
-      }])
-    }, 1000)
-    agentTimeoutsRef.current.push(timeout1)
-
-    const timeout2 = setTimeout(() => {
-      setAgentStatus("Agent is planning steps...")
-      setChatMessages((msgs) => [...msgs, {
-        role: "gemini",
-        text: "Now I'm thinking about the best approach. For this task, I would need to:\n1. Understand the specific requirements\n2. Determine what tools or applications to use\n3. Execute the steps in the right order"
-      }])
-    }, 2500)
-    agentTimeoutsRef.current.push(timeout2)
-
-    try {
-      const response = await window.electronAPI.invoke("gemini-chat", userMessage)
-
-      const timeout3 = setTimeout(() => {
-        setAgentStatus("Agent is executing...")
-        setChatMessages((msgs) => [...msgs, {
-          role: "gemini",
-          text: "Perfect! I found a solution. " + response
-        }])
-      }, 4000)
-      agentTimeoutsRef.current.push(timeout3)
-
-      const timeout4 = setTimeout(() => {
-        setAgentStatus(null)
-        setChatLoading(false)
-        setIsAgentRunning(false)
-        chatInputRef.current?.focus()
-      }, 5500)
-      agentTimeoutsRef.current.push(timeout4)
-    } catch (err) {
-      setChatMessages((msgs) => [...msgs, { role: "gemini", text: "Error: " + String(err) }])
-      setAgentStatus(null)
-      setChatLoading(false)
-      setIsAgentRunning(false)
-      chatInputRef.current?.focus()
-    }
-  }
 
   // Load current model configuration on mount
   useEffect(() => {
@@ -343,7 +287,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     const unsubscribe = window.electronAPI.onScreenshotTaken(async (data) => {
       // Refetch screenshots to update the queue
       await refetch();
-      // Show loading in chat
+      // Show loading
       setChatLoading(true);
       try {
         // Get the latest screenshot path
@@ -351,10 +295,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         if (latest) {
           // Call the LLM to process the screenshot
           const response = await window.electronAPI.invoke("analyze-image-file", latest);
-          setChatMessages((msgs) => [...msgs, { role: "gemini", text: response.text }]);
+          setOriginalHistory((history) => [...history, response.text]);
         }
       } catch (err) {
-        setChatMessages((msgs) => [...msgs, { role: "gemini", text: "Error: " + String(err) }]);
+        setOriginalHistory((history) => [...history, "Error: " + String(err)]);
       } finally {
         setChatLoading(false);
       }
@@ -397,11 +341,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
               onChatSubmit={handleChatSubmit}
               chatLoading={chatLoading}
               agentStatus={agentStatus}
-              onBarClick={handleBarClick}
               isAgentRunning={isAgentRunning}
               onPauseAgent={handlePauseAgent}
-              isFirstUse={isFirstUse}
               isChatOpen={isChatOpen}
+              onTogglePopup={handleTogglePopup}
             />
           </div>
 
@@ -411,7 +354,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             {/* Close button */}
             <div className="flex justify-between items-center mb-2">
               <h3 className="text-xs text-white/70 font-medium">
-                {isFirstUse ? "Detailed Agent Thoughts" : "AI Agent Chat"}
+                Agent Thought Process
               </h3>
               <button
                 onClick={() => setIsChatOpen(false)}
@@ -421,34 +364,30 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto mb-3 p-3 rounded-lg bg-white/10 backdrop-blur-md max-h-64 min-h-[120px] glass-content border border-white/20 shadow-lg">
-              {chatMessages.length === 0 ? (
-                <div className="text-sm text-gray-600 text-center mt-8">
-                  💬 Chat with your AI agent
+              {originalHistory.length === 0 ? (
+                <div className="text-sm text-white/60 text-center mt-8">
+                  The agent's thought process and steps will appear here
                   <br />
-                  <span className="text-xs text-gray-500">Ask the agent to help with tasks on your computer</span>
+                  <span className="text-xs text-white/40">Click the bar above and type a command to get started</span>
                 </div>
               ) : (
-                chatMessages.map((msg, idx) => (
+                originalHistory.map((text, idx) => (
                   <div
                     key={idx}
-                    className={`w-full flex ${msg.role === "user" ? "justify-end" : "justify-start"} mb-3`}
+                    className="w-full flex justify-start mb-3"
                   >
                     <div
-                      className={`max-w-[80%] px-3 py-1.5 rounded-xl text-xs shadow-md backdrop-blur-sm border ${
-                        msg.role === "user" 
-                          ? "bg-gray-700/80 text-gray-100 ml-12 border-gray-600/40" 
-                          : "bg-white/85 text-gray-700 mr-12 border-gray-200/50"
-                      }`}
-                      style={{ wordBreak: "break-word", lineHeight: "1.4" }}
+                      className="max-w-full px-3 py-1.5 rounded-xl text-xs shadow-md backdrop-blur-sm border bg-white/85 text-gray-700 border-gray-200/50"
+                      style={{ wordBreak: "break-word", lineHeight: "1.4", whiteSpace: "pre-wrap" }}
                     >
-                      {msg.text}
+                      {text}
                     </div>
                   </div>
                 ))
               )}
               {chatLoading && (
                 <div className="flex justify-start mb-3">
-                  <div className="bg-white/85 text-gray-600 px-3 py-1.5 rounded-xl text-xs backdrop-blur-sm border border-gray-200/50 shadow-md mr-12">
+                  <div className="bg-white/85 text-gray-600 px-3 py-1.5 rounded-xl text-xs backdrop-blur-sm border border-gray-200/50 shadow-md">
                     <span className="inline-flex items-center">
                       <span className="animate-pulse text-gray-400">●</span>
                       <span className="animate-pulse animation-delay-200 text-gray-400">●</span>
@@ -461,36 +400,6 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
               {/* Auto-scroll anchor */}
               <div ref={chatMessagesEndRef} />
             </div>
-            {/* Only show chat input in popup after first use */}
-            {!isFirstUse && (
-              <form
-                className="flex gap-2 items-center glass-content"
-                onSubmit={e => {
-                  e.preventDefault();
-                  handleChatSend();
-                }}
-              >
-                <input
-                  ref={chatInputRef}
-                  className="flex-1 rounded-lg px-3 py-2 bg-white/25 backdrop-blur-md text-gray-800 placeholder-gray-500 text-xs focus:outline-none focus:ring-1 focus:ring-gray-400/60 border border-white/40 shadow-lg transition-all duration-200"
-                  placeholder="Type your message..."
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  disabled={chatLoading}
-                />
-                <button
-                  type="submit"
-                  className="p-2 rounded-lg bg-gray-600/80 hover:bg-gray-700/80 border border-gray-500/60 flex items-center justify-center transition-all duration-200 backdrop-blur-sm shadow-lg disabled:opacity-50"
-                  disabled={chatLoading || !chatInput.trim()}
-                  tabIndex={-1}
-                  aria-label="Send"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-4 h-4">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-7.5-15-7.5v6l10 1.5-10 1.5v6z" />
-                  </svg>
-                </button>
-              </form>
-            )}
           </div>
           )}
         </div>
