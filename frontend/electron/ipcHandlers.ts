@@ -117,6 +117,13 @@ export function initializeIpcHandlers(appState: AppState): void {
     app.quit()
   })
 
+  ipcMain.handle("set-window-click-through", async (_, clickThrough: boolean) => {
+    const mainWindow = appState.getMainWindow()
+    if (mainWindow) {
+      mainWindow.setIgnoreMouseEvents(clickThrough, { forward: true })
+    }
+  })
+
   // Window movement handlers
   ipcMain.handle("move-window-left", async () => {
     appState.moveWindowLeft()

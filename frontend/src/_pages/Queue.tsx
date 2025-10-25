@@ -9,7 +9,6 @@ import {
   ToastMessage
 } from "../components/ui/toast"
 import QueueCommands from "../components/Queue/QueueCommands"
-import ModelSelector from "../components/ui/ModelSelector"
 
 interface QueueProps {
   setView: React.Dispatch<React.SetStateAction<"queue" | "solutions" | "debug">>
@@ -23,8 +22,6 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     variant: "neutral"
   })
 
-  const [isTooltipVisible, setIsTooltipVisible] = useState(false)
-  const [tooltipHeight, setTooltipHeight] = useState(0)
   const contentRef = useRef<HTMLDivElement>(null)
 
   const [chatInput, setChatInput] = useState("")
@@ -32,11 +29,15 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [chatLoading, setChatLoading] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const chatInputRef = useRef<HTMLInputElement>(null)
-  
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const chatMessagesEndRef = useRef<HTMLDivElement>(null)
+  const [agentStatus, setAgentStatus] = useState<string | null>(null)
+  const [isAgentRunning, setIsAgentRunning] = useState(false)
+  const [isFirstUse, setIsFirstUse] = useState(true)
+
   const [currentModel, setCurrentModel] = useState<{ provider: string; model: string }>({ provider: "gemini", model: "gemini-2.0-flash" })
 
   const barRef = useRef<HTMLDivElement>(null)
+  const agentTimeoutsRef = useRef<NodeJS.Timeout[]>([])
 
   const { data: screenshots = [], refetch } = useQuery<Array<{ path: string; preview: string }>, Error>(
     ["screenshots"],
@@ -86,18 +87,194 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }
 
-  const handleChatSend = async () => {
+  const handleChatSubmit = async () => {
     if (!chatInput.trim()) return
-    setChatMessages((msgs) => [...msgs, { role: "user", text: chatInput }])
+
+    // Add user message to chat
+    const userMessage = chatInput
+    setChatMessages((msgs) => [...msgs, { role: "user", text: userMessage }])
     setChatLoading(true)
     setChatInput("")
+
+    // Start the agent (like clicking the Start button)
+    setIsAgentRunning(true)
+    setIsFirstUse(false)
+
+    // Start showing agent status (don't open popup yet)
+    setAgentStatus("Agent is thinking...")
+
+    // Add initial thinking message to chat (detailed)
+    setChatMessages((msgs) => [...msgs, {
+      role: "gemini",
+      text: "Let me think about how to help you with that..."
+    }])
+
+    // Clear previous timeouts
+    agentTimeoutsRef.current.forEach(clearTimeout)
+    agentTimeoutsRef.current = []
+
+    // Simulate agent thinking process with status updates
+    // This would be replaced with actual agent status updates
+    const timeout1 = setTimeout(() => {
+      setAgentStatus("Agent is analyzing the task...")
+      setChatMessages((msgs) => [...msgs, {
+        role: "gemini",
+        text: "First, I need to understand what you're asking. Let me break down the task: " + userMessage
+      }])
+    }, 1000)
+    agentTimeoutsRef.current.push(timeout1)
+
+    const timeout2 = setTimeout(() => {
+      setAgentStatus("Agent is planning steps...")
+      setChatMessages((msgs) => [...msgs, {
+        role: "gemini",
+        text: "Now I'm thinking about the best approach. For this task, I would need to:\n1. Understand the specific requirements\n2. Determine what tools or applications to use\n3. Execute the steps in the right order"
+      }])
+    }, 2500)
+    agentTimeoutsRef.current.push(timeout2)
+
+    // Send message to LLM
     try {
-      const response = await window.electronAPI.invoke("gemini-chat", chatInput)
-      setChatMessages((msgs) => [...msgs, { role: "gemini", text: response }])
+      const response = await window.electronAPI.invoke("gemini-chat", userMessage)
+
+      // Simulate finding the solution
+      const timeout3 = setTimeout(() => {
+        setAgentStatus("Agent is executing...")
+        setChatMessages((msgs) => [...msgs, {
+          role: "gemini",
+          text: "Perfect! I found a solution. " + response
+        }])
+      }, 4000)
+      agentTimeoutsRef.current.push(timeout3)
+
+      // Complete the task
+      const timeout4 = setTimeout(() => {
+        setAgentStatus(null)
+        setChatLoading(false)
+        setIsAgentRunning(false)
+      }, 5500)
+      agentTimeoutsRef.current.push(timeout4)
     } catch (err) {
       setChatMessages((msgs) => [...msgs, { role: "gemini", text: "Error: " + String(err) }])
-    } finally {
+      setAgentStatus(null)
       setChatLoading(false)
+      setIsAgentRunning(false)
+    }
+  }
+
+  const handlePauseAgent = () => {
+    if (isAgentRunning) {
+      // Pause the agent - stop all processing
+      setIsAgentRunning(false)
+      setAgentStatus(null)
+      setChatLoading(false)
+
+      // Clear all pending timeouts
+      agentTimeoutsRef.current.forEach(clearTimeout)
+      agentTimeoutsRef.current = []
+
+      setChatMessages((msgs) => [...msgs, {
+        role: "gemini",
+        text: "Agent paused by user."
+      }])
+    }
+  }
+
+  const handleBarClick = () => {
+    setIsChatOpen(!isChatOpen)
+  }
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (isChatOpen && chatMessagesEndRef.current) {
+      chatMessagesEndRef.current.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [chatMessages, isChatOpen])
+
+  // Listen for current action updates from Flask server
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onCurrentActionUpdate((action: string) => {
+      // Update agent status with the current action
+      setAgentStatus(action)
+      setIsAgentRunning(true)
+
+      // Add detailed message to chat if open
+      setChatMessages((msgs) => [...msgs, {
+        role: "gemini",
+        text: action
+      }])
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  }, [])
+
+  const handleChatSend = async () => {
+    if (!chatInput.trim()) return
+
+    const userMessage = chatInput
+    setChatMessages((msgs) => [...msgs, { role: "user", text: userMessage }])
+    setChatLoading(true)
+    setChatInput("")
+
+    // Start the agent when sending from popup
+    setIsAgentRunning(true)
+    setAgentStatus("Agent is thinking...")
+
+    // Add initial thinking message
+    setChatMessages((msgs) => [...msgs, {
+      role: "gemini",
+      text: "Let me think about how to help you with that..."
+    }])
+
+    // Clear previous timeouts
+    agentTimeoutsRef.current.forEach(clearTimeout)
+    agentTimeoutsRef.current = []
+
+    // Status updates
+    const timeout1 = setTimeout(() => {
+      setAgentStatus("Agent is analyzing the task...")
+      setChatMessages((msgs) => [...msgs, {
+        role: "gemini",
+        text: "First, I need to understand what you're asking. Let me break down the task: " + userMessage
+      }])
+    }, 1000)
+    agentTimeoutsRef.current.push(timeout1)
+
+    const timeout2 = setTimeout(() => {
+      setAgentStatus("Agent is planning steps...")
+      setChatMessages((msgs) => [...msgs, {
+        role: "gemini",
+        text: "Now I'm thinking about the best approach. For this task, I would need to:\n1. Understand the specific requirements\n2. Determine what tools or applications to use\n3. Execute the steps in the right order"
+      }])
+    }, 2500)
+    agentTimeoutsRef.current.push(timeout2)
+
+    try {
+      const response = await window.electronAPI.invoke("gemini-chat", userMessage)
+
+      const timeout3 = setTimeout(() => {
+        setAgentStatus("Agent is executing...")
+        setChatMessages((msgs) => [...msgs, {
+          role: "gemini",
+          text: "Perfect! I found a solution. " + response
+        }])
+      }, 4000)
+      agentTimeoutsRef.current.push(timeout3)
+
+      const timeout4 = setTimeout(() => {
+        setAgentStatus(null)
+        setChatLoading(false)
+        setIsAgentRunning(false)
+        chatInputRef.current?.focus()
+      }, 5500)
+      agentTimeoutsRef.current.push(timeout4)
+    } catch (err) {
+      setChatMessages((msgs) => [...msgs, { role: "gemini", text: "Error: " + String(err) }])
+      setAgentStatus(null)
+      setChatLoading(false)
+      setIsAgentRunning(false)
       chatInputRef.current?.focus()
     }
   }
@@ -118,11 +295,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   useEffect(() => {
     const updateDimensions = () => {
       if (contentRef.current) {
-        let contentHeight = contentRef.current.scrollHeight
+        const contentHeight = contentRef.current.scrollHeight
         const contentWidth = contentRef.current.scrollWidth
-        if (isTooltipVisible) {
-          contentHeight += tooltipHeight
-        }
         window.electronAPI.updateContentDimensions({
           width: contentWidth,
           height: contentHeight
@@ -161,7 +335,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       resizeObserver.disconnect()
       cleanupFunctions.forEach((cleanup) => cleanup())
     }
-  }, [isTooltipVisible, tooltipHeight])
+  }, [])
 
   // Seamless screenshot-to-LLM flow
   useEffect(() => {
@@ -190,27 +364,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     };
   }, [refetch]);
 
-  const handleTooltipVisibilityChange = (visible: boolean, height: number) => {
-    setIsTooltipVisible(visible)
-    setTooltipHeight(height)
-  }
-
-  const handleChatToggle = () => {
-    setIsChatOpen(!isChatOpen)
-  }
-
-  const handleSettingsToggle = () => {
-    setIsSettingsOpen(!isSettingsOpen)
-  }
-
-  const handleModelChange = (provider: "ollama" | "gemini", model: string) => {
-    setCurrentModel({ provider, model })
-    // Update chat messages to reflect the model change
-    const modelName = provider === "ollama" ? model : "Gemini 2.0 Flash"
-    setChatMessages((msgs) => [...msgs, { 
-      role: "gemini", 
-      text: `🔄 Switched to ${provider === "ollama" ? "🏠" : "☁️"} ${modelName}. Ready for your questions!` 
-    }])
+  const handleChatInputChange = (value: string) => {
+    setChatInput(value)
   }
 
 
@@ -220,7 +375,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       style={{
         position: "relative",
         width: "100%",
-        pointerEvents: "auto"
+        pointerEvents: "none"
       }}
       className="select-none"
     >
@@ -235,32 +390,42 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             <ToastTitle>{toastMessage.title}</ToastTitle>
             <ToastDescription>{toastMessage.description}</ToastDescription>
           </Toast>
-          <div className="w-fit">
+          <div style={{ pointerEvents: "auto" }}>
             <QueueCommands
-              screenshots={screenshots}
-              onTooltipVisibilityChange={handleTooltipVisibilityChange}
-              onChatToggle={handleChatToggle}
-              onSettingsToggle={handleSettingsToggle}
+              chatInput={chatInput}
+              onChatInputChange={handleChatInputChange}
+              onChatSubmit={handleChatSubmit}
+              chatLoading={chatLoading}
+              agentStatus={agentStatus}
+              onBarClick={handleBarClick}
+              isAgentRunning={isAgentRunning}
+              onPauseAgent={handlePauseAgent}
+              isFirstUse={isFirstUse}
+              isChatOpen={isChatOpen}
             />
           </div>
-          {/* Conditional Settings Interface */}
-          {isSettingsOpen && (
-            <div className="mt-4 w-full mx-auto">
-              <ModelSelector onModelChange={handleModelChange} onChatOpen={() => setIsChatOpen(true)} />
-            </div>
-          )}
-          
+
           {/* Conditional Chat Interface */}
           {isChatOpen && (
-            <div className="mt-4 w-full mx-auto liquid-glass chat-container p-4 flex flex-col">
+            <div className="mt-4 w-full max-w-2xl mx-auto liquid-glass chat-container p-4 flex flex-col" style={{ pointerEvents: "auto" }}>
+            {/* Close button */}
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-xs text-white/70 font-medium">
+                {isFirstUse ? "Detailed Agent Thoughts" : "AI Agent Chat"}
+              </h3>
+              <button
+                onClick={() => setIsChatOpen(false)}
+                className="text-white/50 hover:text-white/90 transition-colors text-xs"
+              >
+                ✕
+              </button>
+            </div>
             <div className="flex-1 overflow-y-auto mb-3 p-3 rounded-lg bg-white/10 backdrop-blur-md max-h-64 min-h-[120px] glass-content border border-white/20 shadow-lg">
               {chatMessages.length === 0 ? (
                 <div className="text-sm text-gray-600 text-center mt-8">
-                  💬 Chat with {currentModel.provider === "ollama" ? "🏠" : "☁️"} {currentModel.model}
+                  💬 Chat with your AI agent
                   <br />
-                  <span className="text-xs text-gray-500">Take a screenshot (Cmd+H) for automatic analysis</span>
-                  <br />
-                  <span className="text-xs text-gray-500">Click ⚙️ Models to switch AI providers</span>
+                  <span className="text-xs text-gray-500">Ask the agent to help with tasks on your computer</span>
                 </div>
               ) : (
                 chatMessages.map((msg, idx) => (
@@ -288,39 +453,44 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                       <span className="animate-pulse text-gray-400">●</span>
                       <span className="animate-pulse animation-delay-200 text-gray-400">●</span>
                       <span className="animate-pulse animation-delay-400 text-gray-400">●</span>
-                      <span className="ml-2">{currentModel.model} is replying...</span>
+                      <span className="ml-2">Agent is thinking...</span>
                     </span>
                   </div>
                 </div>
               )}
+              {/* Auto-scroll anchor */}
+              <div ref={chatMessagesEndRef} />
             </div>
-            <form
-              className="flex gap-2 items-center glass-content"
-              onSubmit={e => {
-                e.preventDefault();
-                handleChatSend();
-              }}
-            >
-              <input
-                ref={chatInputRef}
-                className="flex-1 rounded-lg px-3 py-2 bg-white/25 backdrop-blur-md text-gray-800 placeholder-gray-500 text-xs focus:outline-none focus:ring-1 focus:ring-gray-400/60 border border-white/40 shadow-lg transition-all duration-200"
-                placeholder="Type your message..."
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                disabled={chatLoading}
-              />
-              <button
-                type="submit"
-                className="p-2 rounded-lg bg-gray-600/80 hover:bg-gray-700/80 border border-gray-500/60 flex items-center justify-center transition-all duration-200 backdrop-blur-sm shadow-lg disabled:opacity-50"
-                disabled={chatLoading || !chatInput.trim()}
-                tabIndex={-1}
-                aria-label="Send"
+            {/* Only show chat input in popup after first use */}
+            {!isFirstUse && (
+              <form
+                className="flex gap-2 items-center glass-content"
+                onSubmit={e => {
+                  e.preventDefault();
+                  handleChatSend();
+                }}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-4 h-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-7.5-15-7.5v6l10 1.5-10 1.5v6z" />
-                </svg>
-              </button>
-            </form>
+                <input
+                  ref={chatInputRef}
+                  className="flex-1 rounded-lg px-3 py-2 bg-white/25 backdrop-blur-md text-gray-800 placeholder-gray-500 text-xs focus:outline-none focus:ring-1 focus:ring-gray-400/60 border border-white/40 shadow-lg transition-all duration-200"
+                  placeholder="Type your message..."
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  disabled={chatLoading}
+                />
+                <button
+                  type="submit"
+                  className="p-2 rounded-lg bg-gray-600/80 hover:bg-gray-700/80 border border-gray-500/60 flex items-center justify-center transition-all duration-200 backdrop-blur-sm shadow-lg disabled:opacity-50"
+                  disabled={chatLoading || !chatInput.trim()}
+                  tabIndex={-1}
+                  aria-label="Send"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-7.5-15-7.5v6l10 1.5-10 1.5v6z" />
+                  </svg>
+                </button>
+              </form>
+            )}
           </div>
           )}
         </div>

@@ -122,31 +122,46 @@ def _limit_text(text: str, limit: int) -> str:
     return text[: limit - 3].rstrip() + "..."
 
 
+def _sanitize_text(text: str) -> str:
+    # Keep BMP printable characters (basic ASCII punctuation/letters/numbers).
+    sanitized_chars = []
+    for ch in text:
+        # allow standard printable ASCII
+        if 32 <= ord(ch) <= 126:
+            sanitized_chars.append(ch)
+        # allow newline and space explicitly
+        elif ch in {"\n", "\r", "\t"}:
+            sanitized_chars.append(ch)
+        # drop everything else (emojis, control chars)
+    return "".join(sanitized_chars)
+
+
 def _build_notification_payload(message: str) -> dict[str, object]:
     mode = NOTIFICATION_MODE
-    payload: dict[str, object] = {"original": message, "mode": mode}
+    sanitized_message = _sanitize_text(message)
+    payload: dict[str, object] = {"original": sanitized_message, "mode": mode}
 
-    text_summary = _summarize_message(message, "notification_text")
+    text_summary = _summarize_message(sanitized_message, "notification_text")
 
     if mode == "voice":
-        voice_summary = _summarize_message(message, "notification_voice")
-        payload["message"] = voice_summary or message
+        voice_summary = _summarize_message(sanitized_message, "notification_voice")
+        payload["message"] = voice_summary or sanitized_message
         if text_summary:
             payload["display"] = _limit_text(text_summary, 50)
         else:
-            payload["display"] = _limit_text(message, 50)
+            payload["display"] = _limit_text(sanitized_message, 50)
         return payload
 
     if mode == "both":
-        payload["message"] = _limit_text(text_summary or message, 50)
-        voice_summary = _summarize_message(message, "notification_voice")
-        payload["voice_message"] = voice_summary or message
+        payload["message"] = _limit_text(text_summary or sanitized_message, 50)
+        voice_summary = _summarize_message(sanitized_message, "notification_voice")
+        payload["voice_message"] = voice_summary or sanitized_message
         payload["display"] = payload["message"]
         return payload
 
     # text mode (default)
     if not text_summary:
-        payload["message"] = _limit_text(message, 50)
+        payload["message"] = _limit_text(sanitized_message, 50)
     else:
         payload["message"] = _limit_text(text_summary, 50)
 
@@ -161,9 +176,10 @@ def notify_current_action(message: Optional[str] = None) -> None:
     if isinstance(message, str) and len(message) > 50:
         payload = _build_notification_payload(message)
     else:
-        payload = {"message": message or "", "mode": NOTIFICATION_MODE}
+        sanitized = _sanitize_text(message) if isinstance(message, str) else ""
+        payload = {"message": sanitized, "mode": NOTIFICATION_MODE}
         if isinstance(message, str):
-            payload["original"] = message
+            payload["original"] = sanitized
 
     try:
         requests.post(CURRENT_ACTION_URL, json=payload, timeout=2)

@@ -4,6 +4,7 @@ import { WindowHelper } from "./WindowHelper"
 import { ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
 import { ProcessingHelper } from "./ProcessingHelper"
+import { ApiServerHelper } from "./ApiServerHelper"
 
 export class AppState {
   private static instance: AppState | null = null
@@ -12,6 +13,7 @@ export class AppState {
   private screenshotHelper: ScreenshotHelper
   public shortcutsHelper: ShortcutsHelper
   public processingHelper: ProcessingHelper
+  public apiServerHelper: ApiServerHelper
   private tray: Tray | null = null
 
   // View management
@@ -57,6 +59,9 @@ export class AppState {
 
     // Initialize ShortcutsHelper
     this.shortcutsHelper = new ShortcutsHelper(this)
+
+    // Initialize ApiServerHelper
+    this.apiServerHelper = new ApiServerHelper(this)
   }
 
   public static getInstance(): AppState {
@@ -280,6 +285,8 @@ async function initializeApp() {
     appState.createTray()
     // Register global shortcuts using ShortcutsHelper
     appState.shortcutsHelper.registerGlobalShortcuts()
+    // Start API server to receive current action updates
+    appState.apiServerHelper.start()
   })
 
   app.on("activate", () => {
