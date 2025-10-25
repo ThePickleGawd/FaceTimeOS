@@ -19,6 +19,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   chatLoading,
   agentStatus,
   isAgentRunning,
+  onPauseAgent,
   onTogglePopup
 }) => {
   const [isInputActive, setIsInputActive] = useState(false)
@@ -76,6 +77,26 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
             )}
           </div>
         )}
+
+        {/* Pause/Resume Button - Not Draggable */}
+        <button
+          onClick={onPauseAgent}
+          className="px-2 py-2 text-white/60 hover:text-white/90 transition-colors flex items-center"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          title={isAgentRunning ? "Pause Agent" : "Resume Agent"}
+          type="button"
+        >
+          {isAgentRunning ? (
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <rect x="3" y="2" width="3" height="10" rx="1"/>
+              <rect x="8" y="2" width="3" height="10" rx="1"/>
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <path d="M4 2 L4 12 L11 7 Z"/>
+            </svg>
+          )}
+        </button>
 
         {/* Drag Handle - Draggable */}
         <div
