@@ -81,23 +81,20 @@ SERVER_PORT = ENV_CONFIG.get("SERVER_PORT", "8000")
 CURRENT_ACTION_URL = f"http://{SERVER_HOST}:{SERVER_PORT}/api/currentaction"
 
 
-def notify_current_action(_: Optional[str] = None) -> None:
+def notify_current_action(message: Optional[str] = None) -> None:
     if not CURRENT_ACTION_URL:
         return
+
+    # If messages is longer than 50 chars, use agent to summarize it
+    if message and len(message) > 50:
+        pass
+
+    payload = {} if message is None else {"message": message}
     try:
-        requests.post(CURRENT_ACTION_URL, json={}, timeout=2)
+        requests.post(CURRENT_ACTION_URL, json=payload, timeout=2)
     except requests.RequestException:
         pass
 
-
-class AgentLogger(logging.Logger):
-    def info(self, msg, *args, **kwargs):
-        super().info(msg, *args, **kwargs)
-        notify_current_action(str(msg))
-
-
-_PREVIOUS_LOGGER_CLASS = logging.getLoggerClass()
-logging.setLoggerClass(AgentLogger)
 
 ROOT_LOGGER = logging.getLogger()
 if not ROOT_LOGGER.handlers:
@@ -139,8 +136,23 @@ if not ROOT_LOGGER.handlers:
     ROOT_LOGGER.addHandler(stdout_handler)
     ROOT_LOGGER.addHandler(sdebug_handler)
 
-LOGGER = logging.getLogger(__name__)
-logging.setLoggerClass(_PREVIOUS_LOGGER_CLASS)
+
+class CurrentActionHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        notify_current_action(record.getMessage())
+
+
+LOGGER = logging.getLogger("desktopenv.agent")
+LOGGER.setLevel(logging.DEBUG)
+if not any(isinstance(handler, CurrentActionHandler) for handler in LOGGER.handlers):
+    handler = CurrentActionHandler()
+    handler.setLevel(logging.DEBUG)
+    LOGGER.addHandler(handler)
+
+
+def log_debug(message: str) -> None:
+    """Emit a debug log that also triggers the current-action notifier."""
+    LOGGER.debug(message)
 
 
 def show_permission_dialog(code: str, action_description: str) -> bool:
@@ -181,8 +193,6 @@ def run_agent(
     agent: AgentS3, instruction: str, scaled_width: int, scaled_height: int
 ) -> None:
     obs = {}
-    traj = "Task:\n" + instruction
-    subtask_traj = ""
     for step in range(15):
         if STATE.stop_event.is_set():
             LOGGER.debug("Stop requested before step %d", step + 1)
