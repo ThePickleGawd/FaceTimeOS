@@ -8,9 +8,11 @@ import os
 import platform
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Tuple
+from typing_extensions import Literal
 
 import pyautogui
 from PIL import Image
@@ -56,6 +58,8 @@ AGENT: Optional[AgentS3] = None
 GROUNDING_AGENT: Optional[OSWorldACI] = None
 LOCAL_ENV: Optional[LocalEnv] = None
 SCALED_DIMENSIONS: Tuple[int, int] = (0, 0)
+NOTIFICATION_HISTORY_LIMIT = 20
+NOTIFICATION_HISTORY: deque[str] = deque(maxlen=NOTIFICATION_HISTORY_LIMIT)
 
 
 def _load_env_config() -> dict:
@@ -82,7 +86,9 @@ def _normalize_host(host: str) -> str:
 
 ENV_CONFIG = _load_env_config()
 SERVER_HOST = _normalize_host(ENV_CONFIG.get("SERVER_HOST", "127.0.0.1"))
-SERVER_PORT = ENV_CONFIG.get("SERVER_PORT", "8000")
+SERVER_PORT = ENV_CONFIG.get("SERVER_PORT", "8003")
+AGENT_HOST = _normalize_host(ENV_CONFIG.get("AGENT_HOST", "127.0.0.1"))
+AGENT_PORT = ENV_CONFIG.get("AGENT_PORT", "8001")
 CURRENT_ACTION_URL = f"http://{SERVER_HOST}:{SERVER_PORT}/api/currentaction"
 
 NOTIFICATION_MODE_RAW = os.getenv(
@@ -99,15 +105,16 @@ else:
     NOTIFICATION_MODE = "text"
 
 
-def _summarize_message(message: str, style: str) -> Optional[str]:
+def _summarize_message(
+    message: str,
+    style: Literal["notification_text", "notification_voice"],
+) -> Optional[str]:
     if summarize_action is None:
         return None
     try:
-        style_hint = "voice" if style == "notification_voice" else "display"
-        prompt = f"Summarize this agent log for {style_hint} output:\n{message}"
         return summarize_action(
-            [{"type": "text", "text": prompt}],
-            [],
+            [{"type": "text", "text": message}],
+            list(NOTIFICATION_HISTORY),
             summary_style=style,
         )
     except Exception:
@@ -142,28 +149,15 @@ def _build_notification_payload(message: str) -> dict[str, object]:
     payload: dict[str, object] = {"original": sanitized_message, "mode": mode}
 
     text_summary = _summarize_message(sanitized_message, "notification_text")
+    voice_summary = _summarize_message(sanitized_message, "notification_voice")
 
-    if mode == "voice":
-        voice_summary = _summarize_message(sanitized_message, "notification_voice")
-        payload["message"] = voice_summary or sanitized_message
-        if text_summary:
-            payload["display"] = _limit_text(text_summary, 50)
-        else:
-            payload["display"] = _limit_text(sanitized_message, 50)
-        return payload
+    limited_text = _limit_text(text_summary or sanitized_message, 50)
+    payload["message"] = limited_text
+    payload["speech"] = voice_summary or sanitized_message
+    payload["display"] = limited_text
 
-    if mode == "both":
-        payload["message"] = _limit_text(text_summary or sanitized_message, 50)
-        voice_summary = _summarize_message(sanitized_message, "notification_voice")
-        payload["voice_message"] = voice_summary or sanitized_message
-        payload["display"] = payload["message"]
-        return payload
-
-    # text mode (default)
-    if not text_summary:
-        payload["message"] = _limit_text(sanitized_message, 50)
-    else:
-        payload["message"] = _limit_text(text_summary, 50)
+    if sanitized_message:
+        NOTIFICATION_HISTORY.append(sanitized_message)
 
     return payload
 
@@ -180,6 +174,8 @@ def notify_current_action(message: Optional[str] = None) -> None:
         payload = {"message": sanitized, "mode": NOTIFICATION_MODE}
         if isinstance(message, str):
             payload["original"] = sanitized
+        if sanitized:
+            NOTIFICATION_HISTORY.append(sanitized)
 
     try:
         requests.post(CURRENT_ACTION_URL, json=payload, timeout=2)
@@ -590,13 +586,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--host",
         type=str,
-        default="0.0.0.0",
+        default=AGENT_HOST,
         help="Host interface for the Flask server.",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=5001,
+        default=AGENT_PORT,
         help="Port for the Flask server.",
     )
     parser.add_argument(
