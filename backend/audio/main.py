@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from http import HTTPStatus
 from typing import Dict
+from pathlib import Path
 
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request
@@ -12,7 +14,9 @@ from werkzeug.exceptions import BadRequest
 
 from fish_client import FishAudioClient, FishAudioError
 
-load_dotenv()
+DOTENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+
+load_dotenv(dotenv_path=DOTENV_PATH)
 
 _AUDIO_FORMAT_CONTENT_TYPES: Dict[str, str] = {
     "mp3": "audio/mpeg",
@@ -83,4 +87,7 @@ def create_app() -> Flask:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     application = create_app()
-    application.run(host="0.0.0.0", port=5001)
+    load_dotenv(dotenv_path=DOTENV_PATH)
+    host = os.getenv("AUDIO_SERVICE_HOST")
+    port = int(os.getenv("AUDIO_SERVICE_PORT"))
+    application.run(host=host, port=port)
