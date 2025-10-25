@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import base64
+import io
 import logging
 import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 from dotenv import load_dotenv
+
+import audio
 
 
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
@@ -27,7 +31,6 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 LOG_LEVEL = os.getenv("BACKEND_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-
 
 app = Flask(__name__)
 
@@ -303,6 +306,51 @@ def pause():
 def resume():
 	logging.info("Received resume command from UI")
 	return _proxy_command("/api/resume")
+
+
+@app.route("/api/audio/transcribe", methods=["POST"])
+def transcribe() -> Response:
+	"""Transcribe raw audio bytes sent in the request body via fish.audio ASR."""
+	audio_bytes = request.get_data(cache=False)
+	if not audio_bytes:
+		return jsonify({"error": "Request body must contain audio bytes"}), HTTPStatus.BAD_REQUEST
+
+	language = request.args.get("language")
+	
+	try:
+		transcript = audio.transcribe_audio_bytes(audio_bytes, language=language)
+		return jsonify({"text": transcript}), HTTPStatus.OK
+	except audio.FishAudioError as exc:
+		logging.error("fish.audio error: %s", exc)
+		return jsonify({"error": str(exc)}), HTTPStatus.BAD_GATEWAY
+	except ValueError as exc:
+		return jsonify({"error": str(exc)}), HTTPStatus.BAD_REQUEST
+
+
+@app.route("/api/audio/synthesize", methods=["POST"])
+def synthesize() -> Response:
+	"""Synthesize speech for the provided text via fish.audio TTS."""
+	payload = request.get_json(silent=True) or {}
+	text = payload.get("text")
+	
+	if not text:
+		return jsonify({"error": "JSON body with 'text' field is required"}), HTTPStatus.BAD_REQUEST
+
+	voice = payload.get("voice")
+	audio_format = payload.get("audio_format")
+
+	try:
+		audio_bytes = audio.synthesize_speech_from_text(str(text), voice=voice, audio_format=audio_format)
+		content_type = audio.AUDIO_FORMAT_CONTENT_TYPES.get(
+			str(audio_format).lower() if audio_format else "",
+			audio.DEFAULT_AUDIO_CONTENT_TYPE
+		)
+		return Response(io.BytesIO(audio_bytes).getvalue(), mimetype=content_type)
+	except audio.FishAudioError as exc:
+		logging.error("fish.audio error: %s", exc)
+		return jsonify({"error": str(exc)}), HTTPStatus.BAD_GATEWAY
+	except ValueError as exc:
+		return jsonify({"error": str(exc)}), HTTPStatus.BAD_REQUEST
 
 
 if __name__ == "__main__":
