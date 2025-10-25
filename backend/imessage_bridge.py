@@ -10,24 +10,148 @@ from __future__ import annotations
 import argparse
 import logging
 import sqlite3
+import subprocess
+import threading
 import time
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 import requests
+from flask import Flask, jsonify, request
 
 
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
 CHAT_DB_PATH = Path.home() / "Library/Messages/chat.db"
 DEFAULT_CONTACT = None
 DEFAULT_HOST = "http://127.0.0.1"
-DEFAULT_PORT = 5001
+DEFAULT_PORT = 8000
 DEFAULT_INTERVAL = 5.0
+DEFAULT_LISTEN_HOST = "127.0.0.1"
+DEFAULT_LISTEN_PORT = 8100
+DEFAULT_LOG_LEVEL = "INFO"
+BACKEND_TIMEOUT = 30
 
 logger = logging.getLogger(__name__)
+app = Flask(__name__)
+
+
+class IMessageSendError(RuntimeError):
+    """Raised when an outbound iMessage cannot be delivered."""
+
+
+def send_imessage(
+    target: str,
+    text: Optional[str] = None,
+    attachments: Optional[Iterable[Path | str]] = None,
+) -> None:
+    """Send an iMessage to a phone number, email, or chat identifier.
+
+    Parameters
+    ----------
+    target:
+        Phone number, email handle, or chat identifier (e.g., "chat123").
+    text:
+        Optional message body to send.
+    attachments:
+        Iterable of filesystem paths (``str`` or ``Path``) to include as attachments.
+        At least one of ``text`` or ``attachments`` must be provided.
+    """
+
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError("target is required")
+    target_handle = target.strip()
+
+    if text is None:
+        message_body = ""
+    elif not isinstance(text, str):
+        raise ValueError("text must be a string")
+    else:
+        message_body = text
+
+    normalized_attachments: list[str] = []
+    if attachments:
+        for raw_attachment in attachments:
+            path = Path(raw_attachment)
+            if not path.exists():
+                raise ValueError(f"attachment not found: {path}")
+            normalized_attachments.append(str(path))
+
+    if message_body == "" and not normalized_attachments:
+        raise ValueError("either text or attachments must be provided")
+
+    script_lines = [
+        "on run argv",
+        "set targetHandle to item 1 of argv",
+        "set targetMessage to item 2 of argv",
+        "set attachmentCount to (count of argv) - 2",
+        'tell application "Messages"',
+        "if attachmentCount < 0 then set attachmentCount to 0",
+        "set targetChat to missing value",
+        "try",
+        "set targetChat to first chat whose id is targetHandle",
+        "on error",
+        "set targetChat to missing value",
+        "end try",
+        "if targetChat is not missing value then",
+        "if targetMessage is not \"\" then",
+        "send targetMessage to targetChat",
+        "end if",
+        "if attachmentCount > 0 then",
+        "repeat with i from 3 to count of argv",
+        "set attachmentPath to item i of argv",
+        "if attachmentPath is not \"\" then",
+        "set attachmentFile to POSIX file attachmentPath",
+        "send attachmentFile to targetChat",
+        "end if",
+        "end repeat",
+        "end if",
+        "else",
+        'set targetService to first service whose service type = iMessage',
+        "set targetBuddy to buddy targetHandle of targetService",
+        "if targetMessage is not \"\" then",
+        "send targetMessage to targetBuddy",
+        "end if",
+        "if attachmentCount > 0 then",
+        "repeat with i from 3 to count of argv",
+        "set attachmentPath to item i of argv",
+        "if attachmentPath is not \"\" then",
+        "set attachmentFile to POSIX file attachmentPath",
+        "send attachmentFile to targetBuddy",
+        "end if",
+        "end repeat",
+        "end if",
+        "end if",
+        'end tell',
+        'end run',
+    ]
+
+    cmd = ["osascript"]
+    for line in script_lines:
+        cmd.extend(["-e", line])
+    cmd.extend([target_handle, message_body])
+    cmd.extend(normalized_attachments)
+
+    if normalized_attachments:
+        logger.info(
+            "Sending iMessage to %s with %d attachment(s)",
+            target_handle,
+            len(normalized_attachments),
+        )
+    else:
+        logger.info("Sending iMessage to %s", target_handle)
+    try:
+        subprocess.run(cmd, check=True)
+    except FileNotFoundError as exc:
+        logger.exception("osascript not found while sending iMessage to %s", target_handle)
+        raise IMessageSendError("osascript binary not found. This feature requires macOS.") from exc
+    except subprocess.CalledProcessError as exc:
+        logger.exception("AppleScript failed while sending iMessage to %s", target_handle)
+        raise IMessageSendError("AppleScript execution failed") from exc
+    else:
+        logger.info("Successfully sent iMessage to %s", target_handle)
 
 
 @dataclass
@@ -35,7 +159,10 @@ class IncomingMessage:
     rowid: int
     text: str
     received_at: datetime
+    display_name: str
+    phone_number: str
     conversation: str
+    is_group: bool
 
 
 def apple_time_to_datetime(raw_value: Optional[int]) -> datetime:
@@ -116,7 +243,10 @@ class IMessagesPoller:
                         message.ROWID AS rowid,
                         COALESCE(message.text, '') AS text,
                         message.date AS message_date,
-                        COALESCE(chat.display_name, handle.id, chat.guid, 'Unknown') AS conversation
+                        COALESCE(chat.display_name, '') AS display_name,
+                        COALESCE(handle.id, '') AS phone_number,
+                        COALESCE(chat.display_name, handle.id, chat.guid, 'Unknown') AS conversation,
+                        (SELECT COUNT(*) FROM chat_handle_join chj WHERE chj.chat_id = chat.ROWID) > 1 AS is_group
                     FROM message
                     JOIN chat_message_join cmj ON cmj.message_id = message.ROWID
                     JOIN chat ON chat.ROWID = cmj.chat_id
@@ -135,16 +265,22 @@ class IMessagesPoller:
 
         messages = []
         for row in rows:
-            rowid = int(row["rowid"])
+            rowid = int(row["rowid"]) 
             text = row["text"] or ""
             received_at = apple_time_to_datetime(row["message_date"])
+            display_name = row["display_name"] or ""
+            phone_number = row["phone_number"] or ""
             conversation = row["conversation"] or "Unknown"
+            is_group = bool(row["is_group"]) if "is_group" in row.keys() else False
             messages.append(
                 IncomingMessage(
                     rowid=rowid,
                     text=text,
                     received_at=received_at,
+                    display_name=display_name,
+                    phone_number=phone_number,
                     conversation=conversation,
+                    is_group=is_group,
                 )
             )
         return messages
@@ -162,40 +298,149 @@ class IMessagesPoller:
             time.sleep(self.interval)
 
 
-class AgentSClient:
-    """Lightweight client for sending prompts to the Agent-S server."""
+class BackendClient:
+    """HTTP client for delivering iMessage payloads to the backend server."""
 
     def __init__(self, base_url: str, session: Optional[requests.Session] = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.session = session or requests.Session()
 
-    def send_prompt(self, prompt: str) -> None:
+    def deliver_message(self, payload: Dict[str, Any]) -> None:
         try:
             response = self.session.post(
-                f"{self.base_url}/api/chat",
-                json={"prompt": prompt},
-                timeout=30,
+                f"{self.base_url}/api/new_imessage",
+                json=payload,
+                timeout=BACKEND_TIMEOUT,
             )
             response.raise_for_status()
-            logger.info("Forwarded prompt (%s chars) to Agent-S.", len(prompt))
+            logger.info("Delivered message %s to backend.", payload.get("rowid"))
         except requests.RequestException:
-            logger.exception("Failed to forward prompt to Agent-S.")
+            logger.exception("Failed to deliver message to backend.")
+
+
+@dataclass
+class BridgeConfig:
+    backend_base_url: str
+    contact_filter: Optional[str]
+    poll_interval: float
+    listen_host: str
+    listen_port: int
+    log_level: str
+
+
+bridge_config: Optional[BridgeConfig] = None
+backend_client: Optional[BackendClient] = None
+poller_thread: Optional[threading.Thread] = None
+
+
+def _make_message_handler(config: BridgeConfig, client: BackendClient) -> Callable[[IncomingMessage], None]:
+    def handle_message(message: IncomingMessage) -> None:
+        if message.is_group:
+            group_name = message.display_name or message.conversation
+            sender = message.phone_number or "Unknown"
+            contact_label = f"{group_name} — {sender}"
+        else:
+            contact_label = message.display_name or message.phone_number or message.conversation
+
+        source = config.contact_filter or contact_label
+        if not message.text:
+            logger.info("Ignoring empty message from %s.", source)
+            return
+
+        logger.info(
+            "Received message from %s at %s: %s",
+            source,
+            message.received_at.isoformat(),
+            message.text,
+        )
+        client.deliver_message(
+            {
+                "rowid": message.rowid,
+                "text": message.text,
+                "received_at": message.received_at.isoformat(),
+                "display_name": message.display_name,
+                "phone_number": message.phone_number,
+                "conversation": message.conversation,
+                "is_group": message.is_group,
+                "contact_label": contact_label,
+                "source": source,
+            }
+        )
+
+    return handle_message
+
+
+def _run_poller_loop(config: BridgeConfig, client: BackendClient) -> None:
+    poller = IMessagesPoller(config.contact_filter, config.poll_interval)
+    handler = _make_message_handler(config, client)
+    poller.run_forever(handler)
+
+
+def _configure_logging(level: str) -> None:
+    numeric_level = getattr(logging, level.upper(), logging.INFO)
+    logging.basicConfig(level=numeric_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logger.setLevel(numeric_level)
+
+
+def _normalize_attachments(raw: Optional[list]) -> Optional[list[str]]:
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError("attachments must be a list")
+    normalized: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("attachments must contain non-empty paths")
+        normalized.append(str(Path(item.strip().strip("\"'" )).expanduser()))
+    return normalized
+
+
+@app.route("/health", methods=["GET"])
+def health() -> Any:
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/api/send_imessage", methods=["POST"])
+def api_send_imessage() -> Any:
+    payload = request.get_json(silent=True) or {}
+    target = payload.get("target")
+    text = payload.get("text")
+    attachments = payload.get("attachments")
+    logger.info("Send iMessage request for target=%s", target)
+
+    if not isinstance(target, str) or not target.strip():
+        return jsonify({"error": "target is required"}), 400
+    if text is not None and not isinstance(text, str):
+        return jsonify({"error": "text must be a string"}), 400
+
+    try:
+        file_list = _normalize_attachments(attachments)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    message_text = text
+    if isinstance(message_text, str) and not message_text.strip():
+        message_text = None
+    if message_text is None and not (file_list or []):
+        return jsonify({"error": "text or attachments must be provided"}), 400
+
+    try:
+        send_imessage(target.strip(), message_text, file_list)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except IMessageSendError as exc:
+        logger.error("Failed to send outbound iMessage: %s", exc)
+        return jsonify({"status": "failed", "error": str(exc)}), 500
+
+    return jsonify({"status": "sent"}), 200
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Forward inbound iMessages to the Agent-S server."
-    )
+    parser = argparse.ArgumentParser(description="Run the iMessage bridge HTTP service.")
     parser.add_argument(
-        "--host",
-        default=DEFAULT_HOST,
-        help="Base hostname for the Agent-S server (default: %(default)s).",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=DEFAULT_PORT,
-        help="HTTP port of the Agent-S server (default: %(default)s).",
+        "--backend-base-url",
+        default=f"{DEFAULT_HOST}:{DEFAULT_PORT}",
+        help="Base URL for the backend main.py service (default: %(default)s).",
     )
     parser.add_argument(
         "--contact",
@@ -211,33 +456,59 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_INTERVAL,
         help="Polling interval in seconds (default: %(default)s).",
     )
+    parser.add_argument(
+        "--listen-host",
+        default=DEFAULT_LISTEN_HOST,
+        help="Host interface for the bridge HTTP server (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--listen-port",
+        type=int,
+        default=DEFAULT_LISTEN_PORT,
+        help="Port for the bridge HTTP server (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--log-level",
+        default=DEFAULT_LOG_LEVEL,
+        help="Logging level (default: %(default)s).",
+    )
     return parser
 
 
-def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+def main(argv: Optional[list[str]] = None) -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    base_url = f"{args.host}:{args.port}"
-    client = AgentSClient(base_url)
+    _configure_logging(args.log_level)
 
-    poller = IMessagesPoller(args.contact, args.interval)
+    config = BridgeConfig(
+        backend_base_url=args.backend_base_url.rstrip("/"),
+        contact_filter=args.contact,
+        poll_interval=args.interval,
+        listen_host=args.listen_host,
+        listen_port=args.listen_port,
+        log_level=args.log_level,
+    )
 
-    def handle_message(message: IncomingMessage) -> None:
-        source = args.contact or message.conversation
-        if not message.text:
-            logger.info("Ignoring empty message from %s.", source)
-            return
-        logger.info(
-            "Received message from %s at %s: %s",
-            source,
-            message.received_at.isoformat(),
-            message.text,
-        )
-        client.send_prompt(message.text)
+    global bridge_config
+    global backend_client
+    global poller_thread
 
-    poller.run_forever(handle_message)
+    bridge_config = config
+    backend_client = BackendClient(config.backend_base_url)
+
+    poller_thread = threading.Thread(
+        target=_run_poller_loop,
+        args=(config, backend_client),
+        name="imessage-poller",
+        daemon=True,
+    )
+    poller_thread.start()
+
+    app.config["BRIDGE_CONFIG"] = config
+    app.config["BACKEND_CLIENT"] = backend_client
+
+    app.run(host=config.listen_host, port=config.listen_port, debug=False, use_reloader=False)
     return 0
 
 
