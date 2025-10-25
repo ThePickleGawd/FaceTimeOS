@@ -29,6 +29,8 @@ from dotenv import load_dotenv
 
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
 CHAT_DB_PATH = Path.home() / "Library/Messages/chat.db"
+PICTURES_DIR = Path.home() / "Pictures"
+IMESSAGE_COMMAND = "imessage"
 DEFAULT_CONTACT = None
 DEFAULT_INTERVAL = 5.0
 DEFAULT_LOG_LEVEL = "INFO"
@@ -54,161 +56,110 @@ class IMessageSendError(RuntimeError):
     """Raised when an outbound iMessage cannot be delivered."""
 
 
+def _ensure_in_pictures(path: Path) -> Path:
+    """Ensure the attachment resides in the Pictures folder, moving if necessary."""
+    source = Path(path).expanduser()
+    if not source.exists():
+        raise ValueError(f"attachment not found: {source}")
+
+    try:
+        PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.exception("Failed to ensure Pictures directory exists at %s", PICTURES_DIR)
+        raise IMessageSendError("Unable to prepare the Pictures directory.") from exc
+
+    try:
+        source_resolved = source.resolve()
+    except OSError:
+        source_resolved = source
+
+    try:
+        pictures_resolved = PICTURES_DIR.resolve()
+    except OSError:
+        pictures_resolved = PICTURES_DIR
+
+    if source_resolved.parent == pictures_resolved:
+        return source_resolved
+
+    destination = pictures_resolved / source_resolved.name
+    if destination.exists():
+        destination = pictures_resolved / f"{source_resolved.stem}_{uuid.uuid4().hex}{source_resolved.suffix}"
+
+    try:
+        moved_path = Path(shutil.move(str(source_resolved), str(destination)))
+    except OSError as exc:
+        logger.exception("Failed to move attachment %s into %s", source_resolved, pictures_resolved)
+        raise IMessageSendError("Unable to move attachment into the Pictures folder.") from exc
+
+    return moved_path.resolve()
+
+
 def send_imessage(
     target: str,
     text: Optional[str] = None,
     attachments: Optional[Iterable[Path | str]] = None,
 ) -> None:
-    """Send an iMessage to a phone number, email, or chat identifier.
-
-    Parameters
-    ----------
-    target:
-        Phone number, email handle, or chat identifier (e.g., "chat123").
-    text:
-        Optional message body to send.
-    attachments:
-        Iterable of filesystem paths (``str`` or ``Path``) to include as attachments.
-        At least one of ``text`` or ``attachments`` must be provided.
-    """
+    """Send an iMessage to a phone number, email, or chat identifier via the CLI."""
 
     if not isinstance(target, str) or not target.strip():
         raise ValueError("target is required")
     target_handle = target.strip()
 
-    if text is None:
-        message_body = ""
-    elif not isinstance(text, str):
+    if text is not None and not isinstance(text, str):
         raise ValueError("text must be a string")
-    else:
-        message_body = text
 
-    attachment_sources: list[Path] = []
+    message_body = text or ""
+    if isinstance(message_body, str) and not message_body.strip():
+        message_body = ""
+
+    attachment_paths: list[Path] = []
     if attachments:
         for raw_attachment in attachments:
-            path = Path(raw_attachment).expanduser()
-            if not path.exists():
-                raise ValueError(f"attachment not found: {path}")
-            attachment_sources.append(path)
+            if not isinstance(raw_attachment, (str, Path)):
+                raise ValueError("attachments must be filesystem paths")
+            attachment_paths.append(_ensure_in_pictures(Path(raw_attachment)))
 
-    if message_body == "" and not attachment_sources:
+    if not message_body and attachment_paths:
+        message_body = "image"
+
+    if not message_body and not attachment_paths:
         raise ValueError("either text or attachments must be provided")
 
-    temp_dir: Optional[Path] = None
-    temp_copies: list[Path] = []
-    script_attachments: list[str] = []
+    imessage_cli = shutil.which(IMESSAGE_COMMAND)
+    if not imessage_cli:
+        raise IMessageSendError(
+            "imessage CLI not found. Install it with `brew install imessage-ruby`."
+        )
+
+    command = [
+        imessage_cli,
+        "--text",
+        message_body,
+        "--contacts",
+        target_handle,
+    ]
+
+    for attachment_path in attachment_paths:
+        command.extend(["--attachment", str(attachment_path)])
+
+    logger.info(
+        "Sending iMessage via CLI to %s with %d attachment(s)",
+        target_handle,
+        len(attachment_paths),
+    )
 
     try:
-        if attachment_sources:
-            pictures_dir = Path.home() / "Pictures"
-            try:
-                temp_dir = pictures_dir / f"temp_{uuid.uuid4().hex}"
-                temp_dir.mkdir()
-            except FileExistsError:
-                temp_dir = pictures_dir / f"temp_{uuid.uuid4().hex}"
-                temp_dir.mkdir()
-            except OSError as exc:
-                logger.exception("Unable to prepare Pictures temp directory")
-                raise IMessageSendError("Failed to prepare attachment directory") from exc
-
-            for source in attachment_sources:
-                dest = temp_dir / f"{source.name}"
-                try:
-                    shutil.copy2(source, dest)
-                except OSError as exc:
-                    logger.exception("Failed to copy attachment %s", source)
-                    raise IMessageSendError("Failed to prepare attachment files") from exc
-                temp_copies.append(dest)
-
-            script_attachments = [str(path) for path in temp_copies]
-
-        script_lines = [
-    "on run argv",
-    "set targetHandle to item 1 of argv",
-    "set targetMessage to item 2 of argv",
-    "set attachmentCount to (count of argv) - 2",
-    'tell application "Messages"',
-    "if attachmentCount < 0 then set attachmentCount to 0",
-    "set targetChat to missing value",
-    "try",
-    "set targetChat to first chat whose id is targetHandle",
-    "on error",
-    "set targetChat to missing value",
-    "end try",
-    "if targetChat is not missing value then",
-    "if targetMessage is not \"\" then",
-    "send targetMessage to targetChat",
-    "end if",
-    "if attachmentCount > 0 then",
-    "repeat with i from 3 to count of argv",
-    "set attachmentPath to item i of argv",
-    "if attachmentPath is not \"\" then",
-    "set attachmentFile to POSIX file attachmentPath as alias",
-    "send attachmentFile to targetChat",
-    "end if",
-    "end repeat",
-    "end if",
-    "else",
-    'set targetService to first service whose service type = iMessage',
-    "set targetBuddy to buddy targetHandle of targetService",
-    "if targetMessage is not \"\" then",
-    "send targetMessage to targetBuddy",
-    "end if",
-    "if attachmentCount > 0 then",
-    "repeat with i from 3 to count of argv",
-    "set attachmentPath to item i of argv",
-    "if attachmentPath is not \"\" then",
-    "set attachmentFile to POSIX file attachmentPath as alias",
-    "send attachmentFile to targetBuddy",
-    "end if",
-    "end repeat",
-    "end if",
-    "end if",
-    'end tell',
-    'end run',
-]
-
-        cmd = ["osascript"]
-        for line in script_lines:
-            cmd.extend(["-e", line])
-        # "--" tells osascript that the remaining tokens are script arguments, even if
-        # they happen to look like filesystem paths.
-        cmd.append("--")
-        cmd.append(target_handle)
-        cmd.append(message_body)
-        cmd.extend(script_attachments)
-
-        if script_attachments:
-            logger.info(
-                "Sending iMessage to %s with %d attachment(s)",
-                target_handle,
-                len(script_attachments),
-            )
-        else:
-            logger.info("Sending iMessage to %s", target_handle)
-        try:
-            subprocess.run(cmd, check=True)
-        except FileNotFoundError as exc:
-            logger.exception("osascript not found while sending iMessage to %s", target_handle)
-            raise IMessageSendError("osascript binary not found. This feature requires macOS.") from exc
-        except subprocess.CalledProcessError as exc:
-            logger.exception("AppleScript failed while sending iMessage to %s", target_handle)
-            raise IMessageSendError("AppleScript execution failed") from exc
-        else:
-            logger.info("Successfully sent iMessage to %s", target_handle)
-    finally:
-        for temp_file in temp_copies:
-            try:
-                temp_file.unlink()
-            except FileNotFoundError:
-                continue
-            except OSError:
-                logger.warning("Failed to delete temporary attachment %s", temp_file)
-        if temp_dir:
-            try:
-                temp_dir.rmdir()
-            except OSError:
-                shutil.rmtree(temp_dir, ignore_errors=True)
+        subprocess.run(command, check=True)
+    except FileNotFoundError as exc:
+        logger.exception("imessage CLI missing while sending to %s", target_handle)
+        raise IMessageSendError(
+            "imessage CLI not found. Install it with `brew install imessage-ruby`."
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        logger.exception("imessage CLI failed while sending to %s", target_handle)
+        raise IMessageSendError("imessage CLI failed to send the message.") from exc
+    else:
+        logger.info("Successfully sent iMessage to %s", target_handle)
 
 
 @dataclass
