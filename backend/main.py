@@ -270,10 +270,25 @@ def new_imessage() -> Any:
 	if isinstance(phone_number, str) and phone_number.strip():
 		global _last_requester_phone
 		_last_requester_phone = phone_number.strip()
-	
+
+	message_text = payload.get("text")
+	if message_text is None:
+		message_text = ""
+	elif not isinstance(message_text, str):
+		message_text = str(message_text)
+
+	if phone_number and isinstance(phone_number, str) and phone_number.strip():
+		prompt_body = message_text.strip()
+		if prompt_body:
+			prompt = f"Message from {phone_number.strip()}:\n{prompt_body}"
+		else:
+			prompt = f"Message from {phone_number.strip()}."
+	else:
+		prompt = message_text
+
 	# Forward to agent_s for LLM processing
 	forward_payload: Dict[str, Any] = {
-		"prompt": payload.get("text", ""),
+		"prompt": prompt,
 		"metadata": {k: v for k, v in payload.items() if k != "text"},
 	}
 	response = _safe_post(agent_s_client, "/api/chat", forward_payload)
