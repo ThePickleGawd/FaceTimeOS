@@ -39,22 +39,15 @@ declare global {
       onDebugStart: (callback: () => void) => () => void
       onDebugError: (callback: (error: string) => void) => () => void
 
-      // Audio Processing
-      analyzeAudioFromBase64: (data: string, mimeType: string) => Promise<{ text: string; timestamp: number }>
-      analyzeAudioFile: (path: string) => Promise<{ text: string; timestamp: number }>
-
       moveWindowLeft: () => Promise<void>
       moveWindowRight: () => Promise<void>
       moveWindowUp: () => Promise<void>
       moveWindowDown: () => Promise<void>
       quitApp: () => Promise<void>
-
-      // LLM Model Management
-      getCurrentLlmConfig: () => Promise<{ provider: "ollama" | "gemini"; model: string; isOllama: boolean }>
-      getAvailableOllamaModels: () => Promise<string[]>
-      switchToOllama: (model?: string, url?: string) => Promise<{ success: boolean; error?: string }>
-      switchToGemini: (apiKey?: string) => Promise<{ success: boolean; error?: string }>
-      testLlmConnection: () => Promise<{ success: boolean; error?: string }>
+      sendChatPrompt: (prompt: string) => Promise<any>
+      pauseAgent: () => Promise<any>
+      resumeAgent: () => Promise<any>
+      stopAgent: () => Promise<any>
 
       // Current Action Updates
       onCurrentActionUpdate: (callback: (action: { original: string; mode: string; message: string }) => void) => () => void

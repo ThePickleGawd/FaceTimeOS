@@ -17,6 +17,46 @@ export function initializeIpcHandlers(appState: AppState): void {
     return appState.deleteScreenshot(path)
   })
 
+  ipcMain.handle("server-send-chat", async (_event, prompt: string) => {
+    try {
+      const response = await appState.apiServerHelper.sendChat(prompt)
+      return response
+    } catch (error) {
+      console.error("Error sending chat prompt through server:", error)
+      throw error
+    }
+  })
+
+  ipcMain.handle("server-pause-agent", async () => {
+    try {
+      const response = await appState.apiServerHelper.pauseAgent()
+      return response
+    } catch (error) {
+      console.error("Error pausing agent via server:", error)
+      throw error
+    }
+  })
+
+  ipcMain.handle("server-resume-agent", async () => {
+    try {
+      const response = await appState.apiServerHelper.resumeAgent()
+      return response
+    } catch (error) {
+      console.error("Error resuming agent via server:", error)
+      throw error
+    }
+  })
+
+  ipcMain.handle("server-stop-agent", async () => {
+    try {
+      const response = await appState.apiServerHelper.stopAgent()
+      return response
+    } catch (error) {
+      console.error("Error stopping agent via server:", error)
+      throw error
+    }
+  })
+
   ipcMain.handle("take-screenshot", async () => {
     try {
       const screenshotPath = await appState.takeScreenshot()
@@ -70,49 +110,6 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
-  // IPC handler for analyzing audio from base64 data
-  ipcMain.handle("analyze-audio-base64", async (event, data: string, mimeType: string) => {
-    try {
-      const result = await appState.processingHelper.processAudioBase64(data, mimeType)
-      return result
-    } catch (error: any) {
-      console.error("Error in analyze-audio-base64 handler:", error)
-      throw error
-    }
-  })
-
-  // IPC handler for analyzing audio from file path
-  ipcMain.handle("analyze-audio-file", async (event, path: string) => {
-    try {
-      const result = await appState.processingHelper.processAudioFile(path)
-      return result
-    } catch (error: any) {
-      console.error("Error in analyze-audio-file handler:", error)
-      throw error
-    }
-  })
-
-  // IPC handler for analyzing image from file path
-  ipcMain.handle("analyze-image-file", async (event, path: string) => {
-    try {
-      const result = await appState.processingHelper.getLLMHelper().analyzeImageFile(path)
-      return result
-    } catch (error: any) {
-      console.error("Error in analyze-image-file handler:", error)
-      throw error
-    }
-  })
-
-  ipcMain.handle("gemini-chat", async (event, message: string) => {
-    try {
-      const result = await appState.processingHelper.getLLMHelper().chatWithGemini(message);
-      return result;
-    } catch (error: any) {
-      console.error("Error in gemini-chat handler:", error);
-      throw error;
-    }
-  });
-
   ipcMain.handle("quit-app", () => {
     app.quit()
   })
@@ -144,63 +141,4 @@ export function initializeIpcHandlers(appState: AppState): void {
   ipcMain.handle("center-and-show-window", async () => {
     appState.centerAndShowWindow()
   })
-
-  // LLM Model Management Handlers
-  ipcMain.handle("get-current-llm-config", async () => {
-    try {
-      const llmHelper = appState.processingHelper.getLLMHelper();
-      return {
-        provider: llmHelper.getCurrentProvider(),
-        model: llmHelper.getCurrentModel(),
-        isOllama: llmHelper.isUsingOllama()
-      };
-    } catch (error: any) {
-      console.error("Error getting current LLM config:", error);
-      throw error;
-    }
-  });
-
-  ipcMain.handle("get-available-ollama-models", async () => {
-    try {
-      const llmHelper = appState.processingHelper.getLLMHelper();
-      const models = await llmHelper.getOllamaModels();
-      return models;
-    } catch (error: any) {
-      console.error("Error getting Ollama models:", error);
-      throw error;
-    }
-  });
-
-  ipcMain.handle("switch-to-ollama", async (_, model?: string, url?: string) => {
-    try {
-      const llmHelper = appState.processingHelper.getLLMHelper();
-      await llmHelper.switchToOllama(model, url);
-      return { success: true };
-    } catch (error: any) {
-      console.error("Error switching to Ollama:", error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle("switch-to-gemini", async (_, apiKey?: string) => {
-    try {
-      const llmHelper = appState.processingHelper.getLLMHelper();
-      await llmHelper.switchToGemini(apiKey);
-      return { success: true };
-    } catch (error: any) {
-      console.error("Error switching to Gemini:", error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle("test-llm-connection", async () => {
-    try {
-      const llmHelper = appState.processingHelper.getLLMHelper();
-      const result = await llmHelper.testConnection();
-      return result;
-    } catch (error: any) {
-      console.error("Error testing LLM connection:", error);
-      return { success: false, error: error.message };
-    }
-  });
 }
