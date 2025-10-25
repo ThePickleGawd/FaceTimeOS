@@ -3,7 +3,7 @@ import os
 import json
 from collections import defaultdict, deque
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import requests
@@ -48,13 +48,12 @@ def summarize_action(
     content: list[dict[str, Any]],
     history: list[str],
     *,
-    summary_style: str = "action",
+    summary_style: Literal["notification_text", "notification_voice"],
 ) -> str:
     """
     Build a prompt for OpenAI GPT-5 that produces a concise summary.
 
     The behaviour depends on ``summary_style``:
-        - ``"action"`` (default): ultra-brief 8-word action line.
         - ``"notification_text"``: <=50 character UI-friendly blurb.
         - ``"notification_voice"``: natural-sounding voice narration (~160 chars).
     """
