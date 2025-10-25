@@ -9,11 +9,13 @@ import platform
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, Tuple
 
 import pyautogui
 from PIL import Image
 from flask import Flask, Request, jsonify, request
+import requests
 
 from src.s3.agents.agent_s import AgentS3
 from src.s3.agents.grounding import OSWorldACI
@@ -49,6 +51,53 @@ AGENT: Optional[AgentS3] = None
 GROUNDING_AGENT: Optional[OSWorldACI] = None
 LOCAL_ENV: Optional[LocalEnv] = None
 SCALED_DIMENSIONS: Tuple[int, int] = (0, 0)
+
+
+def _load_env_config() -> dict:
+    env_path = Path(__file__).resolve().parents[3] / ".env"
+    config: dict[str, str] = {}
+    if not env_path.exists():
+        return config
+    with env_path.open("r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            config[key.strip()] = value.strip()
+    return config
+
+
+def _normalize_host(host: str) -> str:
+    host = host.strip()
+    if host in {"", "0.0.0.0"}:
+        return "127.0.0.1"
+    return host
+
+
+ENV_CONFIG = _load_env_config()
+SERVER_HOST = _normalize_host(ENV_CONFIG.get("SERVER_HOST", "127.0.0.1"))
+SERVER_PORT = ENV_CONFIG.get("SERVER_PORT", "8000")
+CURRENT_ACTION_URL = f"http://{SERVER_HOST}:{SERVER_PORT}/api/currentaction"
+
+
+def notify_current_action(_: Optional[str] = None) -> None:
+    if not CURRENT_ACTION_URL:
+        return
+    try:
+        requests.post(CURRENT_ACTION_URL, json={}, timeout=2)
+    except requests.RequestException:
+        pass
+
+
+class AgentLogger(logging.Logger):
+    def info(self, msg, *args, **kwargs):
+        super().info(msg, *args, **kwargs)
+        notify_current_action(str(msg))
+
+
+_PREVIOUS_LOGGER_CLASS = logging.getLoggerClass()
+logging.setLoggerClass(AgentLogger)
 
 ROOT_LOGGER = logging.getLogger()
 if not ROOT_LOGGER.handlers:
@@ -91,6 +140,7 @@ if not ROOT_LOGGER.handlers:
     ROOT_LOGGER.addHandler(sdebug_handler)
 
 LOGGER = logging.getLogger(__name__)
+logging.setLoggerClass(_PREVIOUS_LOGGER_CLASS)
 
 
 def show_permission_dialog(code: str, action_description: str) -> bool:
