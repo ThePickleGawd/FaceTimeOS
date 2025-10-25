@@ -14,7 +14,11 @@ from uuid import uuid4
 
 import requests
 from flask import Flask, jsonify, request
+from dotenv import load_dotenv
 
+
+ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
 def _env_bool(name: str, default: bool = False) -> bool:
 	raw = os.getenv(name)
@@ -52,9 +56,26 @@ class RemoteClient:
 
 
 HTTP_TIMEOUT = float(os.getenv("BACKEND_HTTP_TIMEOUT", "10"))
-AGENT_S_BASE_URL = os.getenv("AGENT_S_BASE_URL", "http://localhost:7001")
-UI_SERVER_BASE_URL = os.getenv("UI_SERVER_BASE_URL", "http://localhost:7002")
-IMESSAGE_BRIDGE_BASE_URL = os.getenv("IMESSAGE_BRIDGE_BASE_URL", "http://127.0.0.1:8100")
+AGENT_HOST = os.environ["AGENT_HOST"]
+AGENT_PORT = os.environ["AGENT_PORT"]
+UI_HOST = os.environ["UI_HOST"]
+UI_PORT = os.environ["UI_PORT"]
+IMESSAGE_BRIDGE_HOST = os.environ["IMESSAGE_BRIDGE_HOST"]
+IMESSAGE_BRIDGE_PORT = os.environ["IMESSAGE_BRIDGE_PORT"]
+SERVER_HOST = os.environ["SERVER_HOST"]
+SERVER_PORT = os.environ["SERVER_PORT"]
+AGENT_S_BASE_URL = os.getenv(
+    "AGENT_S_BASE_URL",
+    f"http://{AGENT_HOST}:{AGENT_PORT}",
+)
+UI_SERVER_BASE_URL = os.getenv(
+    "UI_SERVER_BASE_URL",
+    f"http://{UI_HOST}:{UI_PORT}",
+)
+IMESSAGE_BRIDGE_BASE_URL = os.getenv(
+    "IMESSAGE_BRIDGE_BASE_URL",
+    f"http://{IMESSAGE_BRIDGE_HOST}:{IMESSAGE_BRIDGE_PORT}",
+)
 
 agent_s_client = RemoteClient(base_url=AGENT_S_BASE_URL, timeout=HTTP_TIMEOUT)
 ui_client = RemoteClient(base_url=UI_SERVER_BASE_URL, timeout=HTTP_TIMEOUT)
@@ -246,6 +267,5 @@ def resume():
 
 
 if __name__ == "__main__":
-	port = int(os.getenv("BACKEND_PORT", "8000"))
 	debug = _env_bool("BACKEND_DEBUG", default=False)
-	app.run(host="0.0.0.0", port=port, debug=debug)
+	app.run(host=SERVER_HOST, port=int(SERVER_PORT), debug=debug)

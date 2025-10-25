@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 import requests
 from flask import Flask, jsonify, request
+from dotenv import load_dotenv
 
 LOG_LEVEL = os.getenv("AGENT_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=LOG_LEVEL)
@@ -23,8 +24,18 @@ logging.basicConfig(level=LOG_LEVEL)
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
 
+ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
+
 # Configuration
-BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
+AGENT_HOST = os.environ["AGENT_HOST"]
+AGENT_PORT = int(os.environ["AGENT_PORT"])
+SERVER_HOST = os.environ["SERVER_HOST"]
+SERVER_PORT = int(os.environ["SERVER_PORT"])
+BACKEND_BASE_URL = os.getenv(
+    "BACKEND_BASE_URL",
+    f"http://{SERVER_HOST}:{SERVER_PORT}",
+)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 LLM_ENABLED = OPENAI_API_KEY is not None
@@ -158,13 +169,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--host",
-        default=os.getenv("AGENT_HOST", "0.0.0.0"),
+        default=AGENT_HOST,
         help="Host interface for the Agent-S server (default: %(default)s)",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("AGENT_PORT", "7001")),
+        default=AGENT_PORT,
         help="Port for the Agent-S server (default: %(default)s)",
     )
     parser.add_argument(
