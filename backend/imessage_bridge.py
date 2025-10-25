@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import shutil
 import sqlite3
 import subprocess
 import threading
 import time
+import uuid
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -21,18 +24,27 @@ from typing import Any, Callable, Dict, Iterable, Optional
 
 import requests
 from flask import Flask, jsonify, request
+from dotenv import load_dotenv
 
 
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
 CHAT_DB_PATH = Path.home() / "Library/Messages/chat.db"
 DEFAULT_CONTACT = None
-DEFAULT_HOST = "http://127.0.0.1"
-DEFAULT_PORT = 8000
 DEFAULT_INTERVAL = 5.0
-DEFAULT_LISTEN_HOST = "127.0.0.1"
-DEFAULT_LISTEN_PORT = 8100
 DEFAULT_LOG_LEVEL = "INFO"
+ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
+
 BACKEND_TIMEOUT = 30
+
+SERVER_HOST = os.environ["SERVER_HOST"]
+SERVER_PORT = os.environ["SERVER_PORT"]
+IMESSAGE_BRIDGE_HOST = os.environ["IMESSAGE_BRIDGE_HOST"]
+IMESSAGE_BRIDGE_PORT = int(os.environ["IMESSAGE_BRIDGE_PORT"])
+BACKEND_BASE_URL = os.getenv(
+    "BACKEND_BASE_URL",
+    f"http://{SERVER_HOST}:{SERVER_PORT}",
+)
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -71,87 +83,132 @@ def send_imessage(
     else:
         message_body = text
 
-    normalized_attachments: list[str] = []
+    attachment_sources: list[Path] = []
     if attachments:
         for raw_attachment in attachments:
-            path = Path(raw_attachment)
+            path = Path(raw_attachment).expanduser()
             if not path.exists():
                 raise ValueError(f"attachment not found: {path}")
-            normalized_attachments.append(str(path))
+            attachment_sources.append(path)
 
-    if message_body == "" and not normalized_attachments:
+    if message_body == "" and not attachment_sources:
         raise ValueError("either text or attachments must be provided")
 
-    script_lines = [
-        "on run argv",
-        "set targetHandle to item 1 of argv",
-        "set targetMessage to item 2 of argv",
-        "set attachmentCount to (count of argv) - 2",
-        'tell application "Messages"',
-        "if attachmentCount < 0 then set attachmentCount to 0",
-        "set targetChat to missing value",
-        "try",
-        "set targetChat to first chat whose id is targetHandle",
-        "on error",
-        "set targetChat to missing value",
-        "end try",
-        "if targetChat is not missing value then",
-        "if targetMessage is not \"\" then",
-        "send targetMessage to targetChat",
-        "end if",
-        "if attachmentCount > 0 then",
-        "repeat with i from 3 to count of argv",
-        "set attachmentPath to item i of argv",
-        "if attachmentPath is not \"\" then",
-        "set attachmentFile to POSIX file attachmentPath",
-        "send attachmentFile to targetChat",
-        "end if",
-        "end repeat",
-        "end if",
-        "else",
-        'set targetService to first service whose service type = iMessage',
-        "set targetBuddy to buddy targetHandle of targetService",
-        "if targetMessage is not \"\" then",
-        "send targetMessage to targetBuddy",
-        "end if",
-        "if attachmentCount > 0 then",
-        "repeat with i from 3 to count of argv",
-        "set attachmentPath to item i of argv",
-        "if attachmentPath is not \"\" then",
-        "set attachmentFile to POSIX file attachmentPath",
-        "send attachmentFile to targetBuddy",
-        "end if",
-        "end repeat",
-        "end if",
-        "end if",
-        'end tell',
-        'end run',
-    ]
+    temp_dir: Optional[Path] = None
+    temp_copies: list[Path] = []
+    script_attachments: list[str] = []
 
-    cmd = ["osascript"]
-    for line in script_lines:
-        cmd.extend(["-e", line])
-    cmd.extend([target_handle, message_body])
-    cmd.extend(normalized_attachments)
-
-    if normalized_attachments:
-        logger.info(
-            "Sending iMessage to %s with %d attachment(s)",
-            target_handle,
-            len(normalized_attachments),
-        )
-    else:
-        logger.info("Sending iMessage to %s", target_handle)
     try:
-        subprocess.run(cmd, check=True)
-    except FileNotFoundError as exc:
-        logger.exception("osascript not found while sending iMessage to %s", target_handle)
-        raise IMessageSendError("osascript binary not found. This feature requires macOS.") from exc
-    except subprocess.CalledProcessError as exc:
-        logger.exception("AppleScript failed while sending iMessage to %s", target_handle)
-        raise IMessageSendError("AppleScript execution failed") from exc
-    else:
-        logger.info("Successfully sent iMessage to %s", target_handle)
+        if attachment_sources:
+            pictures_dir = Path.home() / "Pictures"
+            try:
+                temp_dir = pictures_dir / f"temp_{uuid.uuid4().hex}"
+                temp_dir.mkdir()
+            except FileExistsError:
+                temp_dir = pictures_dir / f"temp_{uuid.uuid4().hex}"
+                temp_dir.mkdir()
+            except OSError as exc:
+                logger.exception("Unable to prepare Pictures temp directory")
+                raise IMessageSendError("Failed to prepare attachment directory") from exc
+
+            for source in attachment_sources:
+                dest = temp_dir / f"{source.name}"
+                try:
+                    shutil.copy2(source, dest)
+                except OSError as exc:
+                    logger.exception("Failed to copy attachment %s", source)
+                    raise IMessageSendError("Failed to prepare attachment files") from exc
+                temp_copies.append(dest)
+
+            script_attachments = [str(path) for path in temp_copies]
+
+        script_lines = [
+    "on run argv",
+    "set targetHandle to item 1 of argv",
+    "set targetMessage to item 2 of argv",
+    "set attachmentCount to (count of argv) - 2",
+    'tell application "Messages"',
+    "if attachmentCount < 0 then set attachmentCount to 0",
+    "set targetChat to missing value",
+    "try",
+    "set targetChat to first chat whose id is targetHandle",
+    "on error",
+    "set targetChat to missing value",
+    "end try",
+    "if targetChat is not missing value then",
+    "if targetMessage is not \"\" then",
+    "send targetMessage to targetChat",
+    "end if",
+    "if attachmentCount > 0 then",
+    "repeat with i from 3 to count of argv",
+    "set attachmentPath to item i of argv",
+    "if attachmentPath is not \"\" then",
+    "set attachmentFile to POSIX file attachmentPath as alias",
+    "send attachmentFile to targetChat",
+    "end if",
+    "end repeat",
+    "end if",
+    "else",
+    'set targetService to first service whose service type = iMessage',
+    "set targetBuddy to buddy targetHandle of targetService",
+    "if targetMessage is not \"\" then",
+    "send targetMessage to targetBuddy",
+    "end if",
+    "if attachmentCount > 0 then",
+    "repeat with i from 3 to count of argv",
+    "set attachmentPath to item i of argv",
+    "if attachmentPath is not \"\" then",
+    "set attachmentFile to POSIX file attachmentPath as alias",
+    "send attachmentFile to targetBuddy",
+    "end if",
+    "end repeat",
+    "end if",
+    "end if",
+    'end tell',
+    'end run',
+]
+
+        cmd = ["osascript"]
+        for line in script_lines:
+            cmd.extend(["-e", line])
+        # "--" tells osascript that the remaining tokens are script arguments, even if
+        # they happen to look like filesystem paths.
+        cmd.append("--")
+        cmd.append(target_handle)
+        cmd.append(message_body)
+        cmd.extend(script_attachments)
+
+        if script_attachments:
+            logger.info(
+                "Sending iMessage to %s with %d attachment(s)",
+                target_handle,
+                len(script_attachments),
+            )
+        else:
+            logger.info("Sending iMessage to %s", target_handle)
+        try:
+            subprocess.run(cmd, check=True)
+        except FileNotFoundError as exc:
+            logger.exception("osascript not found while sending iMessage to %s", target_handle)
+            raise IMessageSendError("osascript binary not found. This feature requires macOS.") from exc
+        except subprocess.CalledProcessError as exc:
+            logger.exception("AppleScript failed while sending iMessage to %s", target_handle)
+            raise IMessageSendError("AppleScript execution failed") from exc
+        else:
+            logger.info("Successfully sent iMessage to %s", target_handle)
+    finally:
+        for temp_file in temp_copies:
+            try:
+                temp_file.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                logger.warning("Failed to delete temporary attachment %s", temp_file)
+        if temp_dir:
+            try:
+                temp_dir.rmdir()
+            except OSError:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @dataclass
@@ -439,7 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the iMessage bridge HTTP service.")
     parser.add_argument(
         "--backend-base-url",
-        default=f"{DEFAULT_HOST}:{DEFAULT_PORT}",
+        default=BACKEND_BASE_URL,
         help="Base URL for the backend main.py service (default: %(default)s).",
     )
     parser.add_argument(
@@ -458,13 +515,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--listen-host",
-        default=DEFAULT_LISTEN_HOST,
+        default=IMESSAGE_BRIDGE_HOST,
         help="Host interface for the bridge HTTP server (default: %(default)s).",
     )
     parser.add_argument(
         "--listen-port",
         type=int,
-        default=DEFAULT_LISTEN_PORT,
+        default=IMESSAGE_BRIDGE_PORT,
         help="Port for the bridge HTTP server (default: %(default)s).",
     )
     parser.add_argument(
