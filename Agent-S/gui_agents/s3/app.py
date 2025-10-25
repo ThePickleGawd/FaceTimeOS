@@ -1,0 +1,509 @@
+from __future__ import annotations
+
+import argparse
+import datetime
+import io
+import logging
+import os
+import platform
+import threading
+import time
+from dataclasses import dataclass, field
+from typing import Optional, Tuple
+
+import pyautogui
+from PIL import Image
+from flask import Flask, Request, jsonify, request
+
+from gui_agents.s3.agents.agent_s import AgentS3
+from gui_agents.s3.agents.grounding import OSWorldACI
+from gui_agents.s3.utils.local_env import LocalEnv
+
+current_platform = platform.system().lower()
+
+app = Flask(__name__)
+
+
+@dataclass
+class AgentState:
+    """Runtime flags and synchronization primitives for Agent-S."""
+
+    running: bool = False
+    paused: bool = False
+    prompt: Optional[str] = None
+    thread: Optional[threading.Thread] = field(default=None, repr=False)
+    stop_event: threading.Event = field(default_factory=threading.Event, repr=False)
+    pause_event: threading.Event = field(default_factory=threading.Event, repr=False)
+
+    def __post_init__(self) -> None:
+        self.pause_event.set()
+
+    def to_dict(self) -> dict:
+        return {"running": self.running, "paused": self.paused, "prompt": self.prompt}
+
+
+STATE = AgentState()
+STATE_LOCK = threading.Lock()
+
+AGENT: Optional[AgentS3] = None
+GROUNDING_AGENT: Optional[OSWorldACI] = None
+LOCAL_ENV: Optional[LocalEnv] = None
+SCALED_DIMENSIONS: Tuple[int, int] = (0, 0)
+
+ROOT_LOGGER = logging.getLogger()
+if not ROOT_LOGGER.handlers:
+    ROOT_LOGGER.setLevel(logging.DEBUG)
+
+    datetime_str: str = datetime.datetime.now().strftime("%Y%m%d@%H%M%S")
+
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True)
+
+    file_handler = logging.FileHandler(
+        os.path.join("logs", f"normal-{datetime_str}.log"), encoding="utf-8"
+    )
+    debug_handler = logging.FileHandler(
+        os.path.join("logs", f"debug-{datetime_str}.log"), encoding="utf-8"
+    )
+    stdout_handler = logging.StreamHandler()
+    sdebug_handler = logging.FileHandler(
+        os.path.join("logs", f"sdebug-{datetime_str}.log"), encoding="utf-8"
+    )
+
+    file_handler.setLevel(logging.INFO)
+    debug_handler.setLevel(logging.DEBUG)
+    stdout_handler.setLevel(logging.INFO)
+    sdebug_handler.setLevel(logging.DEBUG)
+
+    formatter = logging.Formatter(
+        fmt="\x1b[1;33m[%(asctime)s \x1b[31m%(levelname)s \x1b[32m%(module)s/%(lineno)d-%(processName)s"
+        "\x1b[1;33m] \x1b[0m%(message)s"
+    )
+    for handler in (file_handler, debug_handler, stdout_handler, sdebug_handler):
+        handler.setFormatter(formatter)
+
+    stdout_handler.addFilter(logging.Filter("desktopenv"))
+    sdebug_handler.addFilter(logging.Filter("desktopenv"))
+
+    ROOT_LOGGER.addHandler(file_handler)
+    ROOT_LOGGER.addHandler(debug_handler)
+    ROOT_LOGGER.addHandler(stdout_handler)
+    ROOT_LOGGER.addHandler(sdebug_handler)
+
+LOGGER = logging.getLogger(__name__)
+
+
+def show_permission_dialog(code: str, action_description: str) -> bool:
+    """Show a platform-specific permission dialog and return True if approved."""
+    if platform.system() == "Darwin":
+        result = os.system(
+            f'osascript -e \'display dialog "Do you want to execute this action?\n\n{code} which will try to {action_description}" '
+            'with title "Action Permission" buttons {"Cancel", "OK"} default button "OK" cancel button "Cancel"\''
+        )
+        return result == 0
+    if platform.system() == "Linux":
+        result = os.system(
+            f'zenity --question --title="Action Permission" --text="Do you want to execute this action?\n\n{code}" '
+            "--width=400 --height=200"
+        )
+        return result == 0
+    return False
+
+
+def scale_screen_dimensions(width: int, height: int, max_dim_size: int) -> Tuple[int, int]:
+    scale_factor = min(max_dim_size / width, max_dim_size / height, 1)
+    safe_width = int(width * scale_factor)
+    safe_height = int(height * scale_factor)
+    return safe_width, safe_height
+
+
+def _wait_if_paused() -> bool:
+    """Block while paused; return False if stop requested before resuming."""
+    while not STATE.stop_event.is_set():
+        if STATE.pause_event.wait(timeout=0.1):
+            return True
+    return False
+
+
+def run_agent(agent: AgentS3, instruction: str, scaled_width: int, scaled_height: int) -> None:
+    obs = {}
+    traj = "Task:\n" + instruction
+    subtask_traj = ""
+    for step in range(15):
+        if STATE.stop_event.is_set():
+            LOGGER.debug("Stop requested before step %d", step + 1)
+            break
+        if not _wait_if_paused():
+            LOGGER.debug("Stop requested while paused before step %d", step + 1)
+            break
+
+        screenshot = pyautogui.screenshot()
+        screenshot = screenshot.resize((scaled_width, scaled_height), Image.LANCZOS)
+
+        buffered = io.BytesIO()
+        screenshot.save(buffered, format="PNG")
+        obs["screenshot"] = buffered.getvalue()
+
+        if STATE.stop_event.is_set():
+            LOGGER.debug("Stop requested before prediction step %d", step + 1)
+            break
+        if not _wait_if_paused():
+            LOGGER.debug("Stop requested while paused before prediction step %d", step + 1)
+            break
+
+        LOGGER.info("🔄 Step %d/15: Getting next action from agent...", step + 1)
+        info, code = agent.predict(instruction=instruction, observation=obs)
+
+        if STATE.stop_event.is_set():
+            LOGGER.debug("Stop requested after prediction step %d", step + 1)
+            break
+
+        if "done" in code[0].lower() or "fail" in code[0].lower():
+            if platform.system() == "Darwin":
+                os.system(
+                    'osascript -e \'display dialog "Task Completed" with title "OpenACI Agent" buttons "OK" default button "OK"\''
+                )
+            elif platform.system() == "Linux":
+                os.system(
+                    'zenity --info --title="OpenACI Agent" --text="Task Completed" --width=200 --height=100'
+                )
+            break
+
+        if "next" in code[0].lower():
+            continue
+
+        if "wait" in code[0].lower():
+            LOGGER.info("⏳ Agent requested wait...")
+            for _ in range(50):
+                if STATE.stop_event.is_set():
+                    break
+                if not _wait_if_paused():
+                    break
+                time.sleep(0.1)
+            continue
+
+        time.sleep(1.0)
+        LOGGER.info("EXECUTING CODE: %s", code[0])
+
+        if STATE.stop_event.is_set():
+            LOGGER.debug("Stop requested before executing code at step %d", step + 1)
+            break
+        if not _wait_if_paused():
+            LOGGER.debug("Stop requested while paused before executing code at step %d", step + 1)
+            break
+
+        exec(code[0])
+        time.sleep(1.0)
+
+        if "reflection" in info and "executor_plan" in info:
+            traj += (
+                "\n\nReflection:\n"
+                + str(info["reflection"])
+                + "\n\n----------------------\n\nPlan:\n"
+                + info["executor_plan"]
+            )
+
+        if STATE.stop_event.is_set():
+            LOGGER.debug("Stop requested after executing code at step %d", step + 1)
+            break
+
+
+def _extract_prompt(req: Request) -> str:
+    """Allow raw string or JSON payloads when starting a chat session."""
+    payload = req.get_json(silent=True)
+    if isinstance(payload, dict) and "prompt" in payload:
+        return str(payload["prompt"])
+    raw_body = req.get_data(cache=False, as_text=True) or ""
+    return raw_body.strip()
+
+
+def _agent_worker(prompt: str) -> None:
+    LOGGER.debug("Agent worker started with prompt: %s", prompt)
+    try:
+        if AGENT is None:
+            LOGGER.error("Agent not configured; unable to run.")
+            return
+
+        AGENT.reset()
+        scaled_width, scaled_height = SCALED_DIMENSIONS
+        run_agent(AGENT, prompt, scaled_width, scaled_height)
+    except Exception:
+        LOGGER.exception("Agent run failed.")
+    finally:
+        with STATE_LOCK:
+            STATE.running = False
+            STATE.paused = False
+            STATE.prompt = None
+            STATE.thread = None
+            STATE.stop_event.clear()
+            STATE.pause_event.set()
+        LOGGER.debug("Agent worker finished.")
+
+
+def stop_agent(wait: bool = True) -> None:
+    thread: Optional[threading.Thread] = None
+    with STATE_LOCK:
+        thread = STATE.thread
+        if thread and thread.is_alive():
+            LOGGER.debug("Stop requested for active agent thread.")
+            STATE.stop_event.set()
+            STATE.pause_event.set()
+
+    if wait and thread and thread.is_alive():
+        thread.join()
+
+    with STATE_LOCK:
+        if not (STATE.thread and STATE.thread.is_alive()):
+            STATE.thread = None
+        STATE.running = False
+        STATE.paused = False
+        STATE.prompt = None
+        STATE.stop_event.clear()
+        STATE.pause_event.set()
+
+
+def start_agent(prompt: str) -> None:
+    stop_agent(wait=True)
+
+    if not prompt:
+        with STATE_LOCK:
+            STATE.running = False
+            STATE.paused = False
+            STATE.prompt = None
+        return
+
+    worker = threading.Thread(target=_agent_worker, args=(prompt,), daemon=True)
+    with STATE_LOCK:
+        STATE.prompt = prompt
+        STATE.running = True
+        STATE.paused = False
+        STATE.stop_event.clear()
+        STATE.pause_event.set()
+        STATE.thread = worker
+
+    worker.start()
+    LOGGER.info("Agent started with new prompt.")
+
+
+def pause_agent() -> None:
+    with STATE_LOCK:
+        if STATE.running and not STATE.paused:
+            STATE.paused = True
+            STATE.pause_event.clear()
+            LOGGER.info("Agent paused.")
+
+
+def resume_agent() -> None:
+    with STATE_LOCK:
+        if STATE.running and STATE.paused:
+            STATE.paused = False
+            STATE.pause_event.set()
+            LOGGER.info("Agent resumed.")
+
+
+@app.route("/api/chat", methods=["POST"])
+def start_chat():
+    """
+    Start a new Agent-S run for the supplied prompt.
+
+    The current run (if any) is stopped first so the new prompt can take over.
+    """
+    if AGENT is None:
+        return jsonify({"error": "Agent is not configured."}), 500
+
+    prompt = _extract_prompt(request)
+    if not prompt:
+        return jsonify({"error": "Prompt is required."}), 400
+
+    start_agent(prompt)
+    return jsonify({"status": "started", "state": STATE.to_dict()}), 200
+
+
+@app.route("/api/stop", methods=["GET"])
+def stop():
+    """Stop the current Agent-S run and clear the active prompt."""
+    stop_agent(wait=True)
+    return jsonify({"status": "stopped", "state": STATE.to_dict()}), 200
+
+
+@app.route("/api/pause", methods=["GET"])
+def pause():
+    """Pause an active Agent-S run while keeping the current prompt."""
+    pause_agent()
+    return jsonify({"status": "paused", "state": STATE.to_dict()}), 200
+
+
+@app.route("/api/resume", methods=["GET"])
+def resume():
+    """Resume a paused Agent-S run with the same prompt."""
+    resume_agent()
+    return jsonify({"status": "resumed", "state": STATE.to_dict()}), 200
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run AgentS3 server with specified model.")
+    parser.add_argument(
+        "--provider",
+        type=str,
+        default="openai",
+        help="Specify the provider to use (e.g., openai, anthropic, etc.).",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gpt-5",
+        help="Specify the model to use (e.g., gpt-5).",
+    )
+    parser.add_argument(
+        "--model_url",
+        type=str,
+        default="https://api.openai.com/v1/",
+        help="The URL of the main generation model API.",
+    )
+    parser.add_argument(
+        "--model_api_key",
+        type=str,
+        default="",
+        help="The API key of the main generation model.",
+    )
+    parser.add_argument(
+        "--model_temperature",
+        type=float,
+        default=1.0,
+        help="Temperature to fix the generation model at (e.g. o3 can only be run with 1.0).",
+    )
+    parser.add_argument(
+        "--ground_provider",
+        type=str,
+        default="openai",
+        help="The provider for the grounding model.",
+    )
+    parser.add_argument(
+        "--ground_url",
+        type=str,
+        default="https://api.openai.com/v1/",
+        help="The URL of the grounding model.",
+    )
+    parser.add_argument(
+        "--ground_api_key",
+        type=str,
+        default=os.environ.get("OPENAI_API_KEY", ""),
+        help='The API key of the grounding model (defaults to $OPENAI_API_KEY if set).',
+    )
+    parser.add_argument(
+        "--ground_model",
+        type=str,
+        default="gpt-5",
+        help="The model name for the grounding model.",
+    )
+    parser.add_argument(
+        "--grounding_width",
+        type=int,
+        default=1920,
+        help="Width of screenshot image after processor rescaling.",
+    )
+    parser.add_argument(
+        "--grounding_height",
+        type=int,
+        default=1080,
+        help="Height of screenshot image after processor rescaling.",
+    )
+    parser.add_argument(
+        "--max_trajectory_length",
+        type=int,
+        default=8,
+        help="Maximum number of image turns to keep in trajectory.",
+    )
+    parser.add_argument(
+        "--enable_reflection",
+        action="store_true",
+        default=True,
+        help="Enable reflection agent to assist the worker agent.",
+    )
+    parser.add_argument(
+        "--enable_local_env",
+        action="store_true",
+        default=False,
+        help="Enable local coding environment for code execution (WARNING: Executes arbitrary code locally).",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="Host interface for the Flask server.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=5001,
+        help="Port for the Flask server.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Run Flask in debug mode.",
+    )
+    return parser
+
+
+def configure_agent(args: argparse.Namespace) -> None:
+    global AGENT, GROUNDING_AGENT, LOCAL_ENV, SCALED_DIMENSIONS
+
+    screen_width, screen_height = pyautogui.size()
+    SCALED_DIMENSIONS = scale_screen_dimensions(screen_width, screen_height, max_dim_size=2400)
+
+    engine_params = {
+        "engine_type": args.provider,
+        "model": args.model,
+        "base_url": args.model_url,
+        "api_key": args.model_api_key,
+        "temperature": getattr(args, "model_temperature", None),
+    }
+
+    engine_params_for_grounding = {
+        "engine_type": args.ground_provider,
+        "model": args.ground_model,
+        "base_url": args.ground_url,
+        "api_key": args.ground_api_key,
+        "grounding_width": args.grounding_width,
+        "grounding_height": args.grounding_height,
+    }
+
+    if args.enable_local_env:
+        LOGGER.warning("⚠️  Local coding environment enabled. This executes arbitrary code locally!")
+        LOCAL_ENV = LocalEnv()
+    else:
+        LOCAL_ENV = None
+
+    GROUNDING_AGENT = OSWorldACI(
+        env=LOCAL_ENV,
+        platform=current_platform,
+        engine_params_for_generation=engine_params,
+        engine_params_for_grounding=engine_params_for_grounding,
+        width=screen_width,
+        height=screen_height,
+    )
+
+    AGENT = AgentS3(
+        engine_params,
+        GROUNDING_AGENT,
+        platform=current_platform,
+        max_trajectory_length=args.max_trajectory_length,
+        enable_reflection=args.enable_reflection,
+    )
+
+    LOGGER.info("Agent configured successfully with provider '%s'.", args.provider)
+
+
+def main() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args()
+    configure_agent(args)
+
+    LOGGER.info("Starting Agent-S Flask server on %s:%d", args.host, args.port)
+    app.run(host=args.host, port=args.port, debug=args.debug)
+
+
+if __name__ == "__main__":
+    main()
