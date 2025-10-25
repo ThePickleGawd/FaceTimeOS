@@ -17,6 +17,11 @@ from PIL import Image
 from flask import Flask, Request, jsonify, request
 import requests
 
+try:
+    from src.s3.action_analysis_agent import summarize_action
+except Exception:  # pragma: no cover - summarizer optional
+    summarize_action = None
+
 from src.s3.agents.agent_s import AgentS3
 from src.s3.agents.grounding import OSWorldACI
 from src.s3.utils.local_env import LocalEnv
@@ -80,16 +85,86 @@ SERVER_HOST = _normalize_host(ENV_CONFIG.get("SERVER_HOST", "127.0.0.1"))
 SERVER_PORT = ENV_CONFIG.get("SERVER_PORT", "8000")
 CURRENT_ACTION_URL = f"http://{SERVER_HOST}:{SERVER_PORT}/api/currentaction"
 
+NOTIFICATION_MODE_RAW = os.getenv(
+    "NOTIFICATION_MODE",
+    ENV_CONFIG.get("NOTIFICATION_MODE", "text"),
+).lower()
+if NOTIFICATION_MODE_RAW in {"text-display", "display"}:
+    NOTIFICATION_MODE = "text"
+elif NOTIFICATION_MODE_RAW in {"voice", "spoken"}:
+    NOTIFICATION_MODE = "voice"
+elif NOTIFICATION_MODE_RAW == "both":
+    NOTIFICATION_MODE = "both"
+else:
+    NOTIFICATION_MODE = "text"
+
+
+def _summarize_message(message: str, style: str) -> Optional[str]:
+    if summarize_action is None:
+        return None
+    try:
+        style_hint = "voice" if style == "notification_voice" else "display"
+        prompt = f"Summarize this agent log for {style_hint} output:\n{message}"
+        return summarize_action(
+            [{"type": "text", "text": prompt}],
+            [],
+            summary_style=style,
+        )
+    except Exception:
+        return None
+
+
+def _limit_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _build_notification_payload(message: str) -> dict[str, object]:
+    mode = NOTIFICATION_MODE
+    payload: dict[str, object] = {"original": message, "mode": mode}
+
+    text_summary = _summarize_message(message, "notification_text")
+
+    if mode == "voice":
+        voice_summary = _summarize_message(message, "notification_voice")
+        payload["message"] = voice_summary or message
+        if text_summary:
+            payload["display"] = _limit_text(text_summary, 50)
+        else:
+            payload["display"] = _limit_text(message, 50)
+        return payload
+
+    if mode == "both":
+        payload["message"] = _limit_text(text_summary or message, 50)
+        voice_summary = _summarize_message(message, "notification_voice")
+        payload["voice_message"] = voice_summary or message
+        payload["display"] = payload["message"]
+        return payload
+
+    # text mode (default)
+    if not text_summary:
+        payload["message"] = _limit_text(message, 50)
+    else:
+        payload["message"] = _limit_text(text_summary, 50)
+
+    return payload
+
 
 def notify_current_action(message: Optional[str] = None) -> None:
     if not CURRENT_ACTION_URL:
         return
 
-    # If messages is longer than 50 chars, use agent to summarize it
-    if message and len(message) > 50:
-        pass
+    payload: dict[str, object]
+    if isinstance(message, str) and len(message) > 50:
+        payload = _build_notification_payload(message)
+    else:
+        payload = {"message": message or "", "mode": NOTIFICATION_MODE}
+        if isinstance(message, str):
+            payload["original"] = message
 
-    payload = {} if message is None else {"message": message}
     try:
         requests.post(CURRENT_ACTION_URL, json=payload, timeout=2)
     except requests.RequestException:

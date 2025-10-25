@@ -26,9 +26,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise ValueError("Set OPENAI_API_KEY")
 
-OPENAI_URL = os.getenv(
-    "OPENAI_CHAT_URL", "https://api.openai.com/v1/chat/completions"
-)
+OPENAI_URL = os.getenv("OPENAI_CHAT_URL", "https://api.openai.com/v1/chat/completions")
 MODEL_ENGINE = os.getenv("MODEL_ENGINE", "gpt-5")
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "64"))
 
@@ -49,20 +47,49 @@ trajectory = defaultdict(lambda: deque(maxlen=TRAJECTORY_LEN))
 def summarize_action(
     content: list[dict[str, Any]],
     history: list[str],
+    *,
+    summary_style: str = "action",
 ) -> str:
     """
-    Build a tiny prompt for OpenAI GPT-5 that enforces:
-    - one short line (<= 8 words)
-    - uses prior trajectory for context
-    - can include an image (base64) via 'resource' items
+    Build a prompt for OpenAI GPT-5 that produces a concise summary.
+
+    The behaviour depends on ``summary_style``:
+        - ``"action"`` (default): ultra-brief 8-word action line.
+        - ``"notification_text"``: <=50 character UI-friendly blurb.
+        - ``"notification_voice"``: natural-sounding voice narration (~160 chars).
     """
-    system_rules = (
-        "You generate a SINGLE ultra-brief action summary.\n"
-        "- Max 8 words.\n"
-        "- No emojis. Keep concrete.\n"
-        "- Prefer verbs. No preamble.\n"
-        "- If unsure, say 'Action unclear'."
-    )
+    style = summary_style.lower()
+
+    if style == "notification_text":
+        system_rules = (
+            "You generate a SINGLE concise status line for a small screen.\n"
+            "- Max 50 characters.\n"
+            "- No emojis. Keep concrete and clear.\n"
+            "- Avoid filler words. No preamble.\n"
+            "- If unsure, then simply summarize the message you are given."
+        )
+        char_limit = 50
+        enforce_word_cap = False
+    elif style == "notification_voice":
+        system_rules = (
+            "You narrate a SINGLE natural-sounding voice update.\n"
+            "- Aim for <= 160 characters.\n"
+            "- Friendly but concise tone.\n"
+            "- No emojis.\n"
+            "- If unsure, say summarize the message you are given in a natural voice"
+        )
+        char_limit = 160
+        enforce_word_cap = False
+    else:
+        system_rules = (
+            "You generate a SINGLE ultra-brief action summary.\n"
+            "- Max 8 words.\n"
+            "- No emojis. Keep concrete.\n"
+            "- Prefer verbs. No preamble.\n"
+            "- If unsure, say 'Thinking...'."
+        )
+        char_limit = None
+        enforce_word_cap = True
 
     trajectory_text = ""
     if history:
@@ -104,7 +131,9 @@ def summarize_action(
     }
 
     try:
-        resp = requests.post(OPENAI_URL, headers=HEADERS, data=json.dumps(data), timeout=60)
+        resp = requests.post(
+            OPENAI_URL, headers=HEADERS, data=json.dumps(data), timeout=60
+        )
         resp.raise_for_status()
     except requests.exceptions.RequestException as e:
         return "Action unclear"
@@ -126,9 +155,13 @@ def summarize_action(
         text = str(content).strip()
 
     # Enforce the 8-word cap defensively
-    words = text.split()
-    if len(words) > 8:
-        text = " ".join(words[:8])
+    if enforce_word_cap:
+        words = text.split()
+        if len(words) > 8:
+            text = " ".join(words[:8])
+
+    if char_limit and len(text) > char_limit:
+        text = text[:char_limit].rstrip()
 
     # If the model returns blank, be deterministic
     if not text:
