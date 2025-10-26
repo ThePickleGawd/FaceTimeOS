@@ -427,8 +427,8 @@ class OSWorldACI(ACI):
         return (
             "import subprocess, time, pyautogui; "
             f"subprocess.run(['open', {repr(uri)}], check=True); "
-            "time.sleep(2.0); "
-            f"pyautogui.click({call_x}, {call_y}, button='left')"
+            "time.sleep(8.0); "
+            f"pyautogui.click({call_x}, {call_y}, button='left'); "
             f"pyautogui.click({call_x_2}, {call_y_2}, button='left')"
         )
 
