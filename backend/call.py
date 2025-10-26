@@ -39,7 +39,8 @@ VAD_BUFFER_DURATION = 0.1  # Pre-buffer duration to capture speech onset
 # Optional: Specify device names from environment
 # For system audio capture, use something like "BlackHole 2ch"
 INPUT_DEVICE_NAME = os.getenv("AUDIO_INPUT_DEVICE", None)
-OUTPUT_DEVICE_NAME = os.getenv("AUDIO_OUTPUT_DEVICE", None)
+OUTPUT_DEVICE_NAME1 = os.getenv("AUDIO_OUTPUT_DEVICE1", None)
+OUTPUT_DEVICE_NAME2 = os.getenv("AUDIO_OUTPUT_DEVICE2", None)
 
 # Debug configuration
 DEBUG_AUDIO_LEVELS = os.getenv("DEBUG_AUDIO_LEVELS", "false").lower() == "true"
@@ -50,13 +51,14 @@ print(f"[STARTUP] DEBUG_AUDIO_LEVELS resolved to: {DEBUG_AUDIO_LEVELS}")
 class AudioManager:
     """Manages audio recording and playback with VAD and interruption handling."""
 
-    def __init__(self, input_device: Optional[str] = None, output_device: Optional[str] = None):
+    def __init__(self, input_device: Optional[str] = None, output_device1: Optional[str] = None, output_device2: Optional[str] = None):
         self.recording = False
         self.recording_thread: Optional[threading.Thread] = None
         self.socketio: Optional[SocketIO] = None
         self.audio_chunks_sent = 0
         self.input_device_index = self._find_device(input_device, "input") if input_device else None
-        self.output_device_index = self._find_device(output_device, "output") if output_device else None
+        self.output_device_index_idle = self._find_device(output_device1, "output") if output_device1 else None
+        self.output_device_index_recording = self._find_device(output_device2, "output") if output_device2 else None
         
         # VAD state management
         self.vad_buffer = queue.Queue(maxsize=100)
@@ -83,6 +85,16 @@ class AudioManager:
         logger.info(f"Sample rate: {DEFAULT_SAMPLE_RATE}Hz, Channels: {DEFAULT_CHANNELS}, Chunk size: {CHUNK_SIZE}")
         logger.info(f"Audio level debugging: {'ENABLED' if self.debug_audio_levels else 'DISABLED'}")
         
+        default_device = sd.default.device
+        default_input_index = None
+        default_output_index = None
+        if default_device is not None:
+            try:
+                default_input_index = default_device[0]
+                default_output_index = default_device[1]
+            except TypeError:
+                default_input_index = default_output_index = default_device
+        
         if input_device:
             if self.input_device_index is not None:
                 device_info = sd.query_devices(self.input_device_index)
@@ -91,23 +103,64 @@ class AudioManager:
             else:
                 logger.warning(f"Input device '{input_device}' not found, using system default")
         else:
-            default_input = sd.default.device[0] if isinstance(sd.default.device, (list, tuple)) else sd.default.device
-            if default_input is not None:
-                device_info = sd.query_devices(default_input)
-                logger.info(f"Using system default input: {device_info['name']} (index {default_input})")
+            if default_input_index is not None:
+                try:
+                    device_info = sd.query_devices(default_input_index)
+                    logger.info(f"Using system default input: {device_info['name']} (index {default_input_index})")
+                except Exception as exc:
+                    logger.warning(
+                        "Unable to query system default input device (%s): %s",
+                        default_input_index,
+                        exc
+                    )
+            else:
+                logger.warning("System default input device not available")
         
-        if output_device:
-            if self.output_device_index is not None:
-                device_info = sd.query_devices(self.output_device_index)
-                logger.info(f"Output device: {output_device} (index {self.output_device_index})")
+        def _log_output_device(label: str, device_name: Optional[str], device_index: Optional[int]) -> None:
+            if not device_name:
+                return
+            if device_index is not None:
+                device_info = sd.query_devices(device_index)
+                logger.info(f"{label} output device: {device_name} (index {device_index})")
                 logger.info(f"  - Channels: {device_info['max_output_channels']}, Sample rate: {device_info['default_samplerate']}Hz")
             else:
-                logger.warning(f"Output device '{output_device}' not found, using system default")
+                logger.warning(f"{label} output device '{device_name}' not found, using system default")
+
+        _log_output_device("Idle", output_device1, self.output_device_index_idle)
+        _log_output_device("Recording", output_device2, self.output_device_index_recording)
+
+        default_device_info = None
+        if default_output_index is not None:
+            try:
+                default_device_info = sd.query_devices(default_output_index)
+            except Exception as exc:
+                logger.warning(
+                    "Unable to query system default output device (%s): %s",
+                    default_output_index,
+                    exc
+                )
+                default_output_index = None
+
+        if not output_device1 and not output_device2:
+            if default_device_info is not None:
+                logger.info(f"Using system default output: {default_device_info['name']} (index {default_output_index})")
         else:
-            default_output = sd.default.device[1] if isinstance(sd.default.device, (list, tuple)) else sd.default.device
-            if default_output is not None:
-                device_info = sd.query_devices(default_output)
-                logger.info(f"Using system default output: {device_info['name']} (index {default_output})")
+            if self.output_device_index_idle is None and default_device_info is not None:
+                logger.info(
+                    f"Idle output falling back to system default: {default_device_info['name']} (index {default_output_index})"
+                )
+            if self.output_device_index_recording is None and default_device_info is not None:
+                logger.info(
+                    f"Recording output falling back to system default: {default_device_info['name']} (index {default_output_index})"
+                )
+
+        if self.output_device_index_idle is None:
+            self.output_device_index_idle = default_output_index
+        if self.output_device_index_recording is None:
+            self.output_device_index_recording = default_output_index
+
+        if default_output_index is None:
+            logger.warning("System default output device not available; sounddevice will choose at playback")
         
         if self.debug_audio_levels:
             logger.info("Audio level monitoring enabled for debugging")
@@ -372,7 +425,8 @@ class AudioManager:
                         }, namespace='/')
                         self.last_output_level_emit = current_time
                 
-                sd.play(chunk, samplerate=DEFAULT_SAMPLE_RATE, device=self.output_device_index)
+                device_index = self.output_device_index_recording if self.recording else self.output_device_index_idle
+                sd.play(chunk, samplerate=DEFAULT_SAMPLE_RATE, device=device_index)
                 sd.wait()
             
             if not self.playback_interrupt_event.is_set():
@@ -392,10 +446,19 @@ CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=10_000_000)
 
 # Initialize audio manager
-audio_manager = AudioManager(input_device=INPUT_DEVICE_NAME, output_device=OUTPUT_DEVICE_NAME)
+audio_manager = AudioManager(
+    input_device=INPUT_DEVICE_NAME,
+    output_device1=OUTPUT_DEVICE_NAME1,
+    output_device2=OUTPUT_DEVICE_NAME2
+)
 audio_manager.socketio = socketio
 
-logger.info(f"Audio manager configured: input={INPUT_DEVICE_NAME}, output={OUTPUT_DEVICE_NAME}")
+logger.info(
+    "Audio manager configured: input=%s, idle_output=%s, recording_output=%s",
+    INPUT_DEVICE_NAME,
+    OUTPUT_DEVICE_NAME1,
+    OUTPUT_DEVICE_NAME2
+)
 
 
 @app.route('/devices', methods=['GET'])
