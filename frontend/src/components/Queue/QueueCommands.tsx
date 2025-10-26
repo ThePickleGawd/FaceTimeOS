@@ -23,6 +23,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   onTogglePopup
 }) => {
   const [isInputActive, setIsInputActive] = useState(false)
+  const [isGlowing, setIsGlowing] = useState(false)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -33,6 +34,10 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   }
 
   const handleBarClick = () => {
+    // Trigger both glow and sweep animations
+    setIsGlowing(true)
+    const glowTimeout = setTimeout(() => setIsGlowing(false), 1500) // Remove after animation completes (1.5s)
+
     if (isAgentRunning) {
       // If agent is running, toggle the popup
       onTogglePopup()
@@ -42,11 +47,14 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
         setIsInputActive(true)
       }
     }
+
+    // Cleanup timeout on unmount
+    return () => clearTimeout(glowTimeout)
   }
 
   return (
     <div className="w-full max-w-2xl mx-auto">
-      <form onSubmit={handleSubmit} className="text-xs text-white/90 liquid-glass-bar draggable-area flex items-center">
+      <form onSubmit={handleSubmit} className={`text-xs text-white/90 liquid-glass-bar draggable-area flex items-center ${isGlowing ? 'glowing' : ''}`}>
         {/* Main Content Area - Clickable, Not Draggable */}
         {isInputActive && !isAgentRunning ? (
           <div className="flex-1 px-4 py-2 text-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
