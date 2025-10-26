@@ -9,7 +9,7 @@
 # // },
 
 : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY environment variable must be set}"
-
+source .env
 uv run -m src.s3.app \
     --provider anthropic \
     --model claude-sonnet-4-20250514 \

@@ -2,6 +2,7 @@
 
 : "${OPENAI_API_KEY:?OPENAI_API_KEY environment variable must be set}"
 
+source .env
 uv run -m src.s3.app \
     --provider openai \
     --model gpt-5 \

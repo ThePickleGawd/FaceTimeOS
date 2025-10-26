@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+source .env
 uv run -m src.s3.app \
   --provider openai \
   --model "grok-4-fast-non-reasoning" \
