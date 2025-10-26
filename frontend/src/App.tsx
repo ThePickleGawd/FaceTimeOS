@@ -50,7 +50,16 @@ declare global {
       stopAgent: () => Promise<any>
 
       // Current Action Updates
-      onCurrentActionUpdate: (callback: (action: { original: string; mode: string; message: string }) => void) => () => void
+      onCurrentActionUpdate: (
+        callback: (
+          action: {
+            original: string
+            text_summary: string
+            voice_summary: string
+            mode?: string
+          }
+        ) => void
+      ) => () => void
 
       invoke: (channel: string, ...args: any[]) => Promise<any>
     }

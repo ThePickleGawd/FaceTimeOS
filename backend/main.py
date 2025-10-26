@@ -11,7 +11,7 @@ import tempfile
 from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
 import requests
@@ -343,6 +343,46 @@ def _safe_get(client: RemoteClient, path: str) -> Optional[requests.Response]:
 		return None
 
 
+def _synthesize_speech_payload(
+	text: str,
+	*,
+	voice: Optional[str] = None,
+	audio_format: Optional[str] = None,
+) -> Tuple[bytes, str]:
+	"""Synthesize speech and return audio bytes with best-effort content type."""
+	normalized_voice = voice.strip() if isinstance(voice, str) and voice.strip() else None
+	normalized_format = audio_format.strip() if isinstance(audio_format, str) and audio_format.strip() else None
+
+	audio_bytes = audio.synthesize_speech_from_text(
+		str(text),
+		voice=normalized_voice,
+		audio_format=normalized_format,
+	)
+
+	content_type_key = normalized_format.lower() if normalized_format else ""
+	content_type = audio.AUDIO_FORMAT_CONTENT_TYPES.get(content_type_key, audio.DEFAULT_AUDIO_CONTENT_TYPE)
+	return audio_bytes, content_type
+
+
+def _handle_voice_current_action(payload: Dict[str, Any]) -> None:
+	"""Generate speech for voice notifications and stream it to the call service."""
+	text = payload["voice_summary"]
+
+	voice_raw = payload.get("voice")
+	voice = voice_raw if isinstance(voice_raw, str) else None
+	audio_format_raw = payload.get("audio_format")
+	audio_format = audio_format_raw if isinstance(audio_format_raw, str) else None
+
+	try:
+		audio_bytes, _ = _synthesize_speech_payload(text, voice=voice, audio_format=audio_format)
+	except (audio.FishAudioError, ValueError) as exc:
+		logging.error("Failed to synthesize voice notification: %s", exc)
+		return
+
+	if not call_manager.send_audio_to_output(audio_bytes):
+		logging.debug("Voice notification synthesis skipped: call service inactive or transmission failed")
+
+
 @app.route("/api/completetask", methods=["POST"])
 def complete_task():
 	payload = request.get_json(silent=True) or {}
@@ -399,6 +439,10 @@ def complete_task():
 @app.route("/api/currentaction", methods=["POST"])
 def current_action():
 	payload = request.get_json(silent=True) or {}
+
+	if call_manager.call_active:
+		_handle_voice_current_action(payload)
+
 	logging.info("Current action update: %s", payload)
 
 	response = _safe_post(ui_client, "/api/currentaction", payload)
@@ -554,11 +598,7 @@ def synthesize() -> Response:
 	audio_format = payload.get("audio_format")
 
 	try:
-		audio_bytes = audio.synthesize_speech_from_text(str(text), voice=voice, audio_format=audio_format)
-		content_type = audio.AUDIO_FORMAT_CONTENT_TYPES.get(
-			str(audio_format).lower() if audio_format else "",
-			audio.DEFAULT_AUDIO_CONTENT_TYPE
-		)
+		audio_bytes, content_type = _synthesize_speech_payload(text, voice=voice, audio_format=audio_format)
 		return Response(io.BytesIO(audio_bytes).getvalue(), mimetype=content_type)
 	except audio.FishAudioError as exc:
 		logging.error("fish.audio error: %s", exc)
@@ -577,8 +617,10 @@ def call_started() -> Response:
 	number = payload.get("number")
 	
 	try:
+        
 		# Start the call session with the call.py service
-		success = call_manager.start_call()
+		# success = call_manager.start_call()
+		success = True
 		
 		if success:
 			

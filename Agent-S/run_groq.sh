@@ -13,4 +13,5 @@ python -m src.s3.app \
   --ground_api_key "${GROQ_API_KEY}" \
   --grounding_width 1920 \
   --grounding_height 1080 \
-  --model_temperature 1.0
+  --model_temperature 1.0 \
+  --asi_one_api_key "$ASI_ONE_API_KEY"

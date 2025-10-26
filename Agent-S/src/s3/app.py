@@ -19,11 +19,6 @@ from PIL import Image
 from flask import Flask, Request, jsonify, request
 import requests
 
-try:
-    from src.s3.action_analysis_agent import summarize_action
-except Exception:  # pragma: no cover - summarizer optional
-    summarize_action = None
-
 from src.s3.agents.agent_s import AgentS3
 from src.s3.agents.grounding import OSWorldACI
 from src.s3.utils.local_env import LocalEnv
@@ -91,34 +86,95 @@ AGENT_HOST = _normalize_host(ENV_CONFIG.get("AGENT_HOST", "127.0.0.1"))
 AGENT_PORT = ENV_CONFIG.get("AGENT_PORT", "8001")
 CURRENT_ACTION_URL = f"http://{SERVER_HOST}:{SERVER_PORT}/api/currentaction"
 
-NOTIFICATION_MODE_RAW = os.getenv(
-    "NOTIFICATION_MODE",
-    ENV_CONFIG.get("NOTIFICATION_MODE", "text"),
-).lower()
-if NOTIFICATION_MODE_RAW in {"text-display", "display"}:
-    NOTIFICATION_MODE = "text"
-elif NOTIFICATION_MODE_RAW in {"voice", "spoken"}:
-    NOTIFICATION_MODE = "voice"
-elif NOTIFICATION_MODE_RAW == "both":
-    NOTIFICATION_MODE = "both"
-else:
-    NOTIFICATION_MODE = "text"
+ASI_ONE_ENDPOINT = (
+    os.getenv("ASI_ONE_ENDPOINT", "https://api.asi1.ai/v1/chat/completions").strip()
+    or "https://api.asi1.ai/v1/chat/completions"
+)
+ASI_ONE_MODEL = os.getenv("ASI_ONE_MODEL", "asi1-mini").strip() or "asi1-mini"
+ASI_ONE_AGENT_HANDLE = (
+    os.getenv("ASI_ONE_AGENT_HANDLE", "@computer-use-action-analysis").strip()
+    or "@computer-use-action-analysis"
+)
+ASI_ONE_API_KEY = os.getenv("ASI_ONE_API_KEY", "").strip()
+try:
+    ASI_ONE_TIMEOUT = float(os.getenv("ASI_ONE_TIMEOUT", "4.0"))
+except ValueError:
+    ASI_ONE_TIMEOUT = 4.0
 
 
 def _summarize_message(
     message: str,
     style: Literal["notification_text", "notification_voice"],
 ) -> Optional[str]:
-    if summarize_action is None:
+    if len(message) <= 50 or not ASI_ONE_API_KEY:
         return None
-    try:
-        return summarize_action(
-            [{"type": "text", "text": message}],
-            list(NOTIFICATION_HISTORY),
-            summary_style=style,
+
+    style_normalized = style.lower()
+    if style_normalized == "notification_text":
+        system_prompt = (
+            "You are an assistant that produces a single concise status line (<=50 characters) "
+            "summarizing what the Agent-S desktop agent is doing. Avoid emojis, filler, weird syntax"
         )
-    except Exception:
+        char_limit = 50
+    else:
+        system_prompt = (
+            "You are an assistant that produces a short, natural-sounding spoken update "
+            "(<=160 characters) summarizing what the Agent-S desktop agent is doing. Avoid emojis, filler, weird syntax."
+        )
+        char_limit = 160 if style_normalized == "notification_voice" else None
+
+    history = list(NOTIFICATION_HISTORY)
+    history_block = (
+        "\n".join(f"- {entry}" for entry in history[-NOTIFICATION_HISTORY_LIMIT:])
+        if history
+        else "None"
+    )
+
+    user_content = (
+        f"{ASI_ONE_AGENT_HANDLE}\n"
+        f"Summary style: {style_normalized}\n"
+        f"Recent notification history:\n{history_block}\n\n"
+        f"Current observation:\n{message}"
+    )
+
+    payload = {
+        "model": ASI_ONE_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    }
+
+    headers = {
+        "Authorization": f"Bearer {ASI_ONE_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(
+            ASI_ONE_ENDPOINT, headers=headers, json=payload, timeout=ASI_ONE_TIMEOUT
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:  # pragma: no cover - defensive logging
+        logging.getLogger("desktopenv.agent").warning(
+            "ASI:One summary request failed (%s): %s", style_normalized, exc
+        )
         return None
+    except ValueError as exc:  # json decode errors
+        logging.getLogger("desktopenv.agent").warning(
+            "ASI:One summary response decode failed (%s): %s", style_normalized, exc
+        )
+        return None
+
+    choices = data.get("choices") or []
+    message_data = (choices[0].get("message") if choices else {}) or {}
+    summary_text = (message_data.get("content") or "").strip()
+
+    if char_limit and len(summary_text) > char_limit:
+        summary_text = summary_text[:char_limit].rstrip()
+
+    return summary_text or None
 
 
 def _limit_text(text: str, limit: int) -> str:
@@ -144,17 +200,15 @@ def _sanitize_text(text: str) -> str:
 
 
 def _build_notification_payload(message: str) -> dict[str, object]:
-    mode = NOTIFICATION_MODE
     sanitized_message = _sanitize_text(message)
-    payload: dict[str, object] = {"original": sanitized_message, "mode": mode}
+    payload: dict[str, object] = {"original": sanitized_message}
 
     text_summary = _summarize_message(sanitized_message, "notification_text")
     voice_summary = _summarize_message(sanitized_message, "notification_voice")
 
     limited_text = _limit_text(text_summary or sanitized_message, 50)
-    payload["message"] = limited_text
-    payload["speech"] = voice_summary or sanitized_message
-    payload["display"] = limited_text
+    payload["text_summary"] = limited_text
+    payload["voice_summary"] = voice_summary or sanitized_message
 
     if sanitized_message:
         NOTIFICATION_HISTORY.append(sanitized_message)
@@ -167,13 +221,15 @@ def notify_current_action(message: Optional[str] = None) -> None:
         return
 
     payload: dict[str, object]
-    if isinstance(message, str) and len(message) > 50:
+    if isinstance(message, str) and message:
         payload = _build_notification_payload(message)
     else:
         sanitized = _sanitize_text(message) if isinstance(message, str) else ""
-        payload = {"message": sanitized, "mode": NOTIFICATION_MODE}
-        if isinstance(message, str):
-            payload["original"] = sanitized
+        payload = {
+            "original": sanitized,
+            "text_summary": sanitized,
+            "voice_summary": sanitized,
+        }
         if sanitized:
             NOTIFICATION_HISTORY.append(sanitized)
 
@@ -606,11 +662,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help="Run Flask in debug mode.",
     )
+    parser.add_argument(
+        "--asi_one_api_key",
+        type=str,
+        default=os.getenv("ASI_ONE_API_KEY", ""),
+        help="API key for ASI:One summaries (defaults to $ASI_ONE_API_KEY).",
+    )
     return parser
 
 
 def configure_agent(args: argparse.Namespace) -> None:
-    global AGENT, GROUNDING_AGENT, LOCAL_ENV, SCALED_DIMENSIONS
+    global AGENT, GROUNDING_AGENT, LOCAL_ENV, SCALED_DIMENSIONS, ASI_ONE_API_KEY
 
     screen_width, screen_height = pyautogui.size()
     SCALED_DIMENSIONS = scale_screen_dimensions(
@@ -660,6 +722,9 @@ def configure_agent(args: argparse.Namespace) -> None:
     )
 
     LOGGER.info("Agent configured successfully with provider '%s'.", args.provider)
+
+    if getattr(args, "asi_one_api_key", None):
+        ASI_ONE_API_KEY = args.asi_one_api_key.strip()
 
 
 def main() -> None:

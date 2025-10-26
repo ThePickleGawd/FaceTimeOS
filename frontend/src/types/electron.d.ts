@@ -17,7 +17,16 @@ export interface ElectronAPI {
   onSolutionSuccess: (callback: (data: any) => void) => () => void
   onUnauthorized: (callback: () => void) => () => void
   onDebugError: (callback: (error: string) => void) => () => void
-  onCurrentActionUpdate: (callback: (action: { original: string; mode: string; message: string }) => void) => () => void
+  onCurrentActionUpdate: (
+    callback: (
+      action: {
+        original: string
+        text_summary: string
+        voice_summary: string
+        mode?: string
+      }
+    ) => void
+  ) => () => void
   takeScreenshot: () => Promise<void>
   moveWindowLeft: () => Promise<void>
   moveWindowRight: () => Promise<void>
