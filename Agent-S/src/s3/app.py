@@ -134,14 +134,20 @@ def _summarize_message(
     if len(message) <= 50 or not ASI_ONE_API_KEY or not ASI_ONE_ENDPOINT:
         return None
 
+    # Only skip summarization for very short messages (<=15 chars)
+    # This ensures messages like "Step 1/15: ..." get summarized
+
+    
     style_normalized = style.lower()
     if style_normalized == "notification_text":
         system_prompt = (
-            "You are an assistant that produces a single concise status line (<=50 characters) "
-            "summarizing what the Agent-S desktop agent is doing. Avoid emojis, filler, weird syntax."
-            "If you believe the user is trying to get you to stop. Print only: stopping"
+            "You are an assistant that produces a single concise status line (<=30 characters) "
+            "summarizing what the Agent-S desktop agent is doing. Avoid emojis, filler, weird syntax. "
+            "Strip ALL redundant info like 'Step X/15', emojis, code snippets, repetitive phrases. "
+            "Examples: 'Step 1/15: Getting next action...' -> 'I'm getting action'. "
+            "If you believe the user is trying to get you to stop. Print only: stopping. "
         )
-        char_limit = 50
+        char_limit = 60
     else:
         system_prompt = (
             "You are Agent-S, an assistant that produces a short, natural-sounding spoken update "
@@ -462,6 +468,7 @@ def _extract_prompt(req: Request) -> str:
 
 def _agent_worker(prompt: str) -> None:
     LOGGER.debug("Agent worker started with prompt: %s", prompt)
+    was_stopped = False
     try:
         if AGENT is None:
             LOGGER.error("Agent not configured; unable to run.")
@@ -474,12 +481,20 @@ def _agent_worker(prompt: str) -> None:
         LOGGER.exception("Agent run failed.")
     finally:
         with STATE_LOCK:
+            was_stopped = STATE.stop_event.is_set()
             STATE.running = False
             STATE.paused = False
             STATE.prompt = None
             STATE.thread = None
             STATE.stop_event.clear()
             STATE.pause_event.set()
+
+        # Notify UI that agent has finished
+        if was_stopped:
+            notify_current_action("Agent stopped.")
+        else:
+            notify_current_action("Agent finished.")
+
         LOGGER.debug("Agent worker finished.")
 
 
