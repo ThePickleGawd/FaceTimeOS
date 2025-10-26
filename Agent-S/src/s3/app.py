@@ -55,6 +55,8 @@ LOCAL_ENV: Optional[LocalEnv] = None
 SCALED_DIMENSIONS: Tuple[int, int] = (0, 0)
 NOTIFICATION_HISTORY_LIMIT = 20
 NOTIFICATION_HISTORY: deque[str] = deque(maxlen=NOTIFICATION_HISTORY_LIMIT)
+SUMMARY_HISTORY_LIMIT = 10
+SUMMARY_HISTORY: deque[str] = deque(maxlen=SUMMARY_HISTORY_LIMIT)
 
 
 def _load_env_config() -> dict:
@@ -145,15 +147,19 @@ def _summarize_message(
             "Strip ALL redundant info like 'Step X/15', emojis, code snippets, repetitive phrases. "
             "Examples: 'Step 1/15: Getting next action...' -> 'I'm getting action'. "
             "If you believe the user is trying to get you to stop. Print only: stopping. "
+            "Avoid repeating yourself if you have already summarized the same action. "
+            "If you believe you have already summarized the same action, print only: same action. "
         )
         char_limit = 60
     else:
         system_prompt = (
             "You are Agent-S, an assistant that produces a short, natural-sounding spoken update "
-            "(<=160 characters) summarizing what the Agent-S desktop agent is doing in first person mode. Avoid emojis, filler, weird syntax."
-            "If you believe the user is trying to get you to stop. Print only: stopping."
-            "If you believe that the current message is unnatural or unneeded to say aloud (it's too explicit), don't say anything."
-            "Your top priority is to speak in first person and sound natural."
+            "(<=160 characters) summarizing what the Agent-S desktop agent is doing in first person mode. Avoid emojis, filler, weird syntax. "
+            "If you believe the user is trying to get you to stop. Print only: stopping. "
+            "If you believe that the current message is unnatural or unneeded to say aloud (it's too explicit), don't say anything. "
+            "Your top priority is to speak in first person and sound natural. "
+            "Avoid repeating yourself if you have already summarized the same action. "
+            "If you believe you have already summarized the same action, print only: same action. "
         )
         char_limit = 160 if style_normalized == "notification_voice" else None
 
@@ -163,11 +169,19 @@ def _summarize_message(
         if history
         else "None"
     )
+    
+    summary = list(SUMMARY_HISTORY)
+    summary_block = (
+        "\n".join(f"- {entry}" for entry in summary[-SUMMARY_HISTORY_LIMIT:])
+        if summary
+        else "None"
+    )
 
     user_content = (
         f"{ASI_ONE_AGENT_HANDLE}\n"
         f"Summary style: {style_normalized}\n"
         f"Recent notification history:\n{history_block}\n\n"
+        f"Recent summary history:\n{summary_block}\n\n"
         f"Current observation:\n{message}"
     )
 
@@ -204,9 +218,16 @@ def _summarize_message(
     choices = data.get("choices") or []
     message_data = (choices[0].get("message") if choices else {}) or {}
     summary_text = (message_data.get("content") or "").strip()
+    
+    if "same action" in summary_text:
+        print(summary_text)
+        return None
 
     if char_limit and len(summary_text) > char_limit:
         summary_text = summary_text[:char_limit].rstrip()
+    
+    if summary_text:
+        SUMMARY_HISTORY.append(summary_text)
 
     return summary_text or None
 
@@ -320,10 +341,10 @@ class CurrentActionHandler(logging.Handler):
 
 
 LOGGER = logging.getLogger("desktopenv.agent")
-LOGGER.setLevel(logging.DEBUG)
+LOGGER.setLevel(logging.INFO)
 if not any(isinstance(handler, CurrentActionHandler) for handler in LOGGER.handlers):
     handler = CurrentActionHandler()
-    handler.setLevel(logging.DEBUG)
+    handler.setLevel(logging.INFO)
     LOGGER.addHandler(handler)
 
 
@@ -394,7 +415,7 @@ def run_agent(
             )
             break
 
-        LOGGER.info("🔄 Step %d/15: Getting next action from agent...", step + 1)
+        # LOGGER.info("🔄 Step %d/15: Getting next action from agent...", step + 1)
         info, code = agent.predict(instruction=instruction, observation=obs)
 
         if STATE.stop_event.is_set():
@@ -407,11 +428,11 @@ def run_agent(
         if "done" in action_lower or "fail" in action_lower:
             status = "fail" if "fail" in action_lower else "done"
             try:
-                LOGGER.info(
-                    "I'm done!"
-                    if status == "done"
-                    else "I messed up something. Let me know what to do next."
-                )
+                # LOGGER.info(
+                #     "I'm done!"
+                #     if status == "done"
+                #     else "I messed up something. Let me know what to do next."
+                # )
                 requests.post(
                     f"http://{SERVER_HOST}:{SERVER_PORT}/api/completetask",
                     json={"status": status, "action": action_text},
