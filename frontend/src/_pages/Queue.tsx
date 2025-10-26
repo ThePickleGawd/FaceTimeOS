@@ -198,14 +198,16 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       if (
         normalized.includes("completed") ||
         normalized.includes("finished") ||
-        normalized.includes("done")
+        normalized.includes("done") ||
+        normalized.includes("stopped")
       ) {
         // Reset state after a short delay to show the completion message
-        setTimeout(() => {
+        const timeout = setTimeout(() => {
           setIsAgentRunning(false)
           setAgentStatus(null)
           setChatLoading(false)
         }, 2000)
+        agentTimeoutsRef.current.push(timeout)
       }
     })
 
