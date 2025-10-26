@@ -24,6 +24,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
 }) => {
   const [isInputActive, setIsInputActive] = useState(false)
   const [isGlowing, setIsGlowing] = useState(false)
+  const [showPersistentGlow, setShowPersistentGlow] = useState(false)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -36,7 +37,13 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   const handleBarClick = () => {
     // Trigger both glow and sweep animations
     setIsGlowing(true)
-    const glowTimeout = setTimeout(() => setIsGlowing(false), 1500) // Remove after animation completes (1.5s)
+    const glowTimeout = setTimeout(() => {
+      setIsGlowing(false)
+      // After animation completes, if agent is running, keep persistent glow
+      if (isAgentRunning) {
+        setShowPersistentGlow(true)
+      }
+    }, 1500) // Remove after animation completes (1.5s)
 
     if (isAgentRunning) {
       // If agent is running, toggle the popup
@@ -52,9 +59,16 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
     return () => clearTimeout(glowTimeout)
   }
 
+  // Remove persistent glow when agent stops running
+  React.useEffect(() => {
+    if (!isAgentRunning) {
+      setShowPersistentGlow(false)
+    }
+  }, [isAgentRunning])
+
   return (
     <div className="w-full max-w-2xl mx-auto">
-      <form onSubmit={handleSubmit} className={`text-xs text-white/90 liquid-glass-bar draggable-area flex items-center ${isGlowing ? 'glowing' : ''}`}>
+      <form onSubmit={handleSubmit} className={`text-xs text-slate-300 liquid-glass-bar draggable-area flex items-center ${isGlowing ? 'glowing' : ''} ${showPersistentGlow ? 'glowing-persistent' : ''}`}>
         {/* Main Content Area - Clickable, Not Draggable */}
         {isInputActive && !isAgentRunning ? (
           <div className="flex-1 px-4 py-2 text-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
@@ -66,13 +80,13 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
               disabled={chatLoading}
               autoFocus
               onBlur={() => !chatInput && setIsInputActive(false)}
-              className="w-full px-0 py-0 bg-transparent text-white placeholder-white/50 text-xs text-center focus:outline-none focus:ring-0 border-0 transition-all duration-200 disabled:opacity-50"
+              className="w-full px-0 py-0 bg-transparent text-slate-300 placeholder-slate-400 text-xs text-center focus:outline-none focus:ring-0 border-0 transition-all duration-200 disabled:opacity-50"
             />
           </div>
         ) : (
           <div
             onClick={handleBarClick}
-            className="flex-1 px-4 py-2 bg-transparent text-white text-xs cursor-pointer hover:bg-white/5 transition-all duration-200 flex items-center justify-center gap-2"
+            className="flex-1 px-4 py-2 bg-transparent text-slate-300 text-xs cursor-pointer hover:bg-slate-700/30 transition-all duration-200 flex items-center justify-center gap-2"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
             {agentStatus ? (
@@ -81,7 +95,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
                 <span>{agentStatus}</span>
               </>
             ) : (
-              <span className="text-white/70">Agent is ready</span>
+              <span className="text-slate-400">Agent is ready</span>
             )}
           </div>
         )}
@@ -90,7 +104,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
         {isAgentRunning && (
           <button
             onClick={onPauseAgent}
-            className="px-2 py-2 text-white/60 hover:text-red-400 transition-colors flex items-center"
+            className="px-2 py-2 text-slate-400 hover:text-red-400 transition-colors flex items-center"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             title="Stop Agent"
             type="button"
@@ -103,7 +117,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
 
         {/* Drag Handle - Draggable */}
         <div
-          className="px-3 py-2 text-white/40 hover:text-white/60 transition-colors cursor-move flex items-center"
+          className="px-3 py-2 text-slate-500 hover:text-slate-400 transition-colors cursor-move flex items-center"
           title="Drag to move"
         >
           <svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor">
