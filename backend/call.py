@@ -1,9 +1,10 @@
-"""Flask server for audio recording and streaming."""
+"""Flask server for audio recording and streaming with VAD and interruption handling."""
 from __future__ import annotations
 
 import base64
 import logging
 import os
+import queue
 import threading
 import time
 from pathlib import Path
@@ -27,6 +28,12 @@ DEFAULT_SAMPLE_RATE = 48000
 DEFAULT_CHANNELS = 2
 CHUNK_SIZE = 1024
 
+# Voice Activity Detection (VAD) configuration
+VAD_ENERGY_THRESHOLD = 0.01  # Energy threshold for voice detection
+VAD_MIN_SPEECH_DURATION = 0.3  # Minimum speech duration in seconds
+VAD_MAX_SILENCE_DURATION = 0.8  # Maximum silence before ending utterance
+VAD_BUFFER_DURATION = 0.1  # Pre-buffer duration to capture speech onset
+
 # Optional: Specify device names from environment
 # For system audio capture, use something like "BlackHole 2ch"
 INPUT_DEVICE_NAME = os.getenv("AUDIO_INPUT_DEVICE", None)
@@ -34,7 +41,7 @@ OUTPUT_DEVICE_NAME = os.getenv("AUDIO_OUTPUT_DEVICE", None)
 
 
 class AudioManager:
-    """Manages audio recording and playback."""
+    """Manages audio recording and playback with VAD and interruption handling."""
 
     def __init__(self, input_device: Optional[str] = None, output_device: Optional[str] = None):
         self.recording = False
@@ -43,6 +50,20 @@ class AudioManager:
         self.audio_chunks_sent = 0
         self.input_device_index = self._find_device(input_device, "input") if input_device else None
         self.output_device_index = self._find_device(output_device, "output") if output_device else None
+        
+        # VAD state management
+        self.vad_buffer = queue.Queue(maxsize=100)
+        self.current_utterance = []
+        self.is_speaking = False
+        self.silence_frames = 0
+        self.speech_frames = 0
+        self.pre_buffer = []
+        self.pre_buffer_size = int(VAD_BUFFER_DURATION * DEFAULT_SAMPLE_RATE / CHUNK_SIZE)
+        
+        # Playback interruption control
+        self.playback_active = False
+        self.playback_interrupt_event = threading.Event()
+        self.current_playback_stream = None
         
         logger.info(f"AudioManager initialized")
         logger.info(f"Sample rate: {DEFAULT_SAMPLE_RATE}Hz, Channels: {DEFAULT_CHANNELS}, Chunk size: {CHUNK_SIZE}")
@@ -110,21 +131,60 @@ class AudioManager:
             logger.info(f"Recording worker stopped. Total chunks sent: {self.audio_chunks_sent}")
 
     def _audio_callback(self, indata, frames, time_info, status):
-        """Callback for audio input stream."""
+        """Callback for audio input stream with VAD processing."""
         if status:
             logger.warning(f"Audio callback status: {status}")
         
-        # Convert audio to bytes
-        audio_bytes = indata.astype(np.int16).tobytes()
+        # Calculate energy for VAD
+        audio_array = indata.astype(np.float32)
+        energy = np.sqrt(np.mean(audio_array ** 2))
         
-        # Emit via websocket if connected
-        if self.socketio:
-            # Encode as base64 for websocket transmission
-            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-            self.socketio.emit('audio_stream', {'audio': audio_b64}, namespace='/')
-            self.audio_chunks_sent += 1
-            if self.audio_chunks_sent % 100 == 0:
-                logger.debug(f"Sent {self.audio_chunks_sent} audio chunks ({len(audio_bytes)} bytes/chunk)")
+        # Maintain pre-buffer for capturing speech onset
+        self.pre_buffer.append(indata.copy())
+        if len(self.pre_buffer) > self.pre_buffer_size:
+            self.pre_buffer.pop(0)
+        
+        # Voice Activity Detection
+        if energy > VAD_ENERGY_THRESHOLD:
+            # Speech detected
+            if not self.is_speaking:
+                # Start of utterance
+                self.is_speaking = True
+                self.silence_frames = 0
+                # Add pre-buffer to capture speech onset
+                self.current_utterance = list(self.pre_buffer)
+                logger.debug("Speech started")
+                
+                # Interrupt any ongoing playback
+                if self.playback_active:
+                    self.interrupt_playback()
+                    
+            self.current_utterance.append(indata.copy())
+            self.speech_frames += 1
+            
+        else:
+            # Silence detected
+            if self.is_speaking:
+                self.current_utterance.append(indata.copy())
+                self.silence_frames += 1
+                
+                # Check if silence duration exceeds threshold
+                silence_duration = self.silence_frames * CHUNK_SIZE / DEFAULT_SAMPLE_RATE
+                if silence_duration > VAD_MAX_SILENCE_DURATION:
+                    # End of utterance
+                    speech_duration = len(self.current_utterance) * CHUNK_SIZE / DEFAULT_SAMPLE_RATE
+                    
+                    if speech_duration > VAD_MIN_SPEECH_DURATION:
+                        # Valid utterance, send to main.py
+                        self._send_utterance()
+                    else:
+                        logger.debug(f"Discarding short utterance ({speech_duration:.2f}s)")
+                    
+                    # Reset state
+                    self.is_speaking = False
+                    self.current_utterance = []
+                    self.silence_frames = 0
+                    self.speech_frames = 0
 
     def start_recording(self) -> bool:
         """Start recording from the configured input device."""
@@ -155,10 +215,44 @@ class AudioManager:
         logger.info(f"Recording stopped. Total chunks sent: {self.audio_chunks_sent}")
         return True
 
+    def _send_utterance(self):
+        """Send complete utterance to main.py."""
+        if not self.current_utterance or not self.socketio:
+            return
+            
+        # Combine all audio chunks
+        combined_audio = np.concatenate(self.current_utterance)
+        audio_bytes = combined_audio.astype(np.int16).tobytes()
+        
+        # Encode and send via websocket
+        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+        self.socketio.emit('user_utterance', {
+            'audio': audio_b64,
+            'duration': len(self.current_utterance) * CHUNK_SIZE / DEFAULT_SAMPLE_RATE
+        }, namespace='/')
+        
+        logger.info(f"Sent utterance: {len(audio_bytes)} bytes, {len(self.current_utterance)} chunks")
+        self.audio_chunks_sent += 1
+    
+    def interrupt_playback(self):
+        """Interrupt ongoing audio playback."""
+        if self.playback_active:
+            logger.info("Interrupting playback due to user speech")
+            self.playback_interrupt_event.set()
+            sd.stop()
+            self.playback_active = False
+            
+            # Notify main.py about interruption
+            if self.socketio:
+                self.socketio.emit('playback_interrupted', {}, namespace='/')
+    
     def output_audio(self, audio_bytes: bytes):
-        """Output audio bytes through the configured output device."""
+        """Output audio bytes with interruption support."""
         try:
-            logger.debug(f"Outputting audio: {len(audio_bytes)} bytes")
+            logger.debug(f"Starting audio output: {len(audio_bytes)} bytes")
+            self.playback_active = True
+            self.playback_interrupt_event.clear()
+            
             # Convert bytes to numpy array (int16 samples)
             audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
             
@@ -169,15 +263,25 @@ class AudioManager:
                 # Keep as 1D for mono
                 pass
             
-            logger.debug(f"Playing audio array: shape={audio_array.shape}, device={self.output_device_index}")
-            # Play audio using the configured output device
-            sd.play(audio_array, samplerate=DEFAULT_SAMPLE_RATE, device=self.output_device_index)
-            sd.wait()
+            # Play audio in chunks to allow interruption
+            chunk_samples = CHUNK_SIZE * 4  # Larger chunks for smoother playback
+            for i in range(0, len(audio_array), chunk_samples):
+                if self.playback_interrupt_event.is_set():
+                    logger.info("Playback interrupted")
+                    break
+                    
+                chunk = audio_array[i:i+chunk_samples]
+                sd.play(chunk, samplerate=DEFAULT_SAMPLE_RATE, device=self.output_device_index)
+                sd.wait()
             
-            logger.info(f"Audio playback completed: {len(audio_bytes)} bytes")
+            if not self.playback_interrupt_event.is_set():
+                logger.info(f"Audio playback completed: {len(audio_bytes)} bytes")
+            
+            self.playback_active = False
             
         except Exception as e:
             logger.error(f"Error outputting audio: {e}", exc_info=True)
+            self.playback_active = False
 
 
 # Initialize Flask app and extensions
