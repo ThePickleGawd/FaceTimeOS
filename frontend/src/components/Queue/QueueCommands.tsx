@@ -78,25 +78,20 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
           </div>
         )}
 
-        {/* Pause/Resume Button - Not Draggable */}
-        <button
-          onClick={onPauseAgent}
-          className="px-2 py-2 text-white/60 hover:text-white/90 transition-colors flex items-center"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          title={isAgentRunning ? "Pause Agent" : "Resume Agent"}
-          type="button"
-        >
-          {isAgentRunning ? (
+        {/* Stop Button - Only show when agent is running */}
+        {isAgentRunning && (
+          <button
+            onClick={onPauseAgent}
+            className="px-2 py-2 text-white/60 hover:text-red-400 transition-colors flex items-center"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            title="Stop Agent"
+            type="button"
+          >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
-              <rect x="3" y="2" width="3" height="10" rx="1"/>
-              <rect x="8" y="2" width="3" height="10" rx="1"/>
+              <rect x="3" y="3" width="8" height="8" rx="1"/>
             </svg>
-          ) : (
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
-              <path d="M4 2 L4 12 L11 7 Z"/>
-            </svg>
-          )}
-        </button>
+          </button>
+        )}
 
         {/* Drag Handle - Draggable */}
         <div

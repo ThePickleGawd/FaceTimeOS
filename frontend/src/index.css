@@ -120,10 +120,10 @@ button, input, select, textarea, .interactive {
 .liquid-glass.chat-container {
   min-height: auto;
   height: auto;
-  background: rgba(255, 255, 255, 0.4);
+  background: rgba(190, 190, 190, 0.7);
   backdrop-filter: blur(20px) saturate(200%) brightness(110%);
   -webkit-backdrop-filter: blur(20px) saturate(200%) brightness(110%);
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(170, 170, 170, 0.5);
   box-shadow:
     0 12px 40px rgba(0, 0, 0, 0.15),
     inset 0 1px 0 rgba(255, 255, 255, 0.2),
@@ -132,10 +132,10 @@ button, input, select, textarea, .interactive {
 
 /* Thin bar variant of liquid glass - for command bar */
 .liquid-glass-bar {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(190, 190, 190, 0.7);
   backdrop-filter: blur(16px) saturate(180%) brightness(120%);
   -webkit-backdrop-filter: blur(16px) saturate(180%) brightness(120%);
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  border: 2px solid rgba(170, 170, 170, 0.5);
   border-radius: 1rem;
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.2),

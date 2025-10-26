@@ -91,21 +91,26 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     if (!chatInput.trim()) return
 
     const userMessage = chatInput
-    setChatLoading(true)
     setChatInput("")
+
+    // Stop any existing agent thread first to prevent "active thread" errors
+    try {
+      await window.electronAPI.stopAgent()
+    } catch (err) {
+      console.log('No active agent to stop, continuing...')
+    }
 
     // Clear previous history and start fresh
     setOriginalHistory([])
 
-    // Start the agent
-    setIsAgentRunning(true)
-
-    // Start showing agent status
-    setAgentStatus("Agent is thinking...")
-
     // Clear previous timeouts
     agentTimeoutsRef.current.forEach(clearTimeout)
     agentTimeoutsRef.current = []
+
+    // Now start the new agent request
+    setChatLoading(true)
+    setIsAgentRunning(true)
+    setAgentStatus("Agent is thinking...")
 
     // Send message to Agent S via POST /api/chat
     // The actual status updates will come from POST /api/currentaction
@@ -123,9 +128,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const handlePauseAgent = async () => {
     if (isAgentRunning) {
-      // Pause the agent - send pause request to Agent S
+      // Stop the agent completely (changed from pause to stop for better reliability)
       try {
-        await window.electronAPI.pauseAgent()
+        await window.electronAPI.stopAgent()
         setIsAgentRunning(false)
         setAgentStatus(null)
         setChatLoading(false)
@@ -134,19 +139,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         agentTimeoutsRef.current.forEach(clearTimeout)
         agentTimeoutsRef.current = []
 
-        setOriginalHistory((history) => [...history, "Agent paused by user."])
+        setOriginalHistory((history) => [...history, "Agent stopped by user."])
       } catch (err) {
-        console.error('Error pausing agent:', err)
-      }
-    } else {
-      // Resume the agent - send resume request to Agent S
-      try {
-        await window.electronAPI.resumeAgent()
-        setIsAgentRunning(true)
-        setAgentStatus("Resuming...")
-        setOriginalHistory((history) => [...history, "Agent resumed by user."])
-      } catch (err) {
-        console.error('Error resuming agent:', err)
+        console.error('Error stopping agent:', err)
       }
     }
   }
