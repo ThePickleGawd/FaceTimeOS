@@ -19,8 +19,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Backend server configuration
-BACKEND_HOST = os.getenv("SERVER_HOST", "127.0.0.1")
-BACKEND_PORT = os.getenv("SERVER_PORT", "8003")
+BACKEND_HOST = os.getenv("SERVER_HOST")
+BACKEND_PORT = os.getenv("SERVER_PORT")
 BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 
 
