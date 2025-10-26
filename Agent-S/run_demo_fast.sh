@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-python -m src.s3.app \
+uv run -m src.s3.app \
   --provider openai \
   --model "grok-4-fast-non-reasoning" \
   --model_url "https://api.x.ai/v1/" \

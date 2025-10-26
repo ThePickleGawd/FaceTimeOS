@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-python -m src.s3.app \
+uv run -m src.s3.app \
   --provider openai \
   --model gpt-5 \
   --ground_provider huggingface \

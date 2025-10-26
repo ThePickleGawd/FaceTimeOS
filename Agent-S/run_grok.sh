@@ -1,6 +1,6 @@
 # load GROK_API_KEY into the shell
 source .env
-python -m src.s3.app \
+uv run -m src.s3.app \
   --provider openai \
   --model "grok-4-fast-non-reasoning" \
   --model_url "https://api.x.ai/v1/" \
