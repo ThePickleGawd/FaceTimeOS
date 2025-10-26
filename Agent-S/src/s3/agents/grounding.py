@@ -414,23 +414,19 @@ class OSWorldACI(ACI):
         """Initiate a FaceTime call to the provided phone number or address."""
         assert self.platform == "darwin", "FaceTime calls are only supported on macOS."
         uri = f"facetime://{number.strip()}"
-        call_button_coords = self.generate_coords("FaceTime call button", self.obs)
 
-        call_x, call_y = (
-            93,
-            928,
-        )  # Hardcoded coordinates for FaceTime call button (full screen mode)
-        call_x_2, call_y_2 = (
-            123,
-            928,
-        )  # Calvin's facetime button location
         return (
             "import subprocess, time, pyautogui; "
             f"subprocess.run(['open', {repr(uri)}], check=True); "
             "time.sleep(2.0); "
-            f"pyautogui.click({call_x}, {call_y}, button='left'); "
-            "time.sleep(1.0); "
-            f"pyautogui.click({call_x_2}, {call_y_2}, button='left')"
+            "pyautogui.click(93, 928, button='left'); "  # Click the call button
+            "pyautogui.click(123, 928, button='left'); "  # Click Calvin's button
+            "time.sleep(10.0); "  # Wait for entering call
+            "pyautogui.click(254, 923, button='left'); "  # Click share screen
+            "time.sleep(0.5); "
+            "pyautogui.click(254, 935, button='left'); "  # Click share "my" screen
+            "time.sleep(1); "
+            "pyautogui.click(1407, 27, button='left')"  # Click confirm share whole screen
         )
 
     @agent_action
