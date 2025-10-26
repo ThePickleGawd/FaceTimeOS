@@ -2,6 +2,7 @@
 
 : "${GROQ_API_KEY:?GROQ_API_KEY environment variable must be set}"
 
+source .env
 uv run -m src.s3.app \
   --provider openai \
   --model "llama-3.1-8b-instant" \

@@ -16,7 +16,7 @@ class PROCEDURAL_MEMORY:
         procedural_memory = textwrap.dedent(
             f"""\
         You are an expert in graphical user interfaces and Python code. You are responsible for executing the task: `TASK_DESCRIPTION`.
-        You are working in CURRENT_OS.
+        You are working in CURRENT_OS. The default browser is Chrome.
 
         # GUIDELINES
 

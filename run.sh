@@ -13,7 +13,7 @@ cd ..
 
 # Start Agent S
 cd Agent-S
-./run_grok.sh &
+./run_demo_fast.sh &
 cd ..
 
 # Start frontend
