@@ -410,6 +410,30 @@ class OSWorldACI(ACI):
             ), f"Unsupported platform: {self.platform}. Supported platforms are: darwin, linux, windows."
 
     @agent_action
+    def start_facetime_call(self, number: str):
+        """Initiate a FaceTime call to the provided phone number or address."""
+        assert self.platform == "darwin", "FaceTime calls are only supported on macOS."
+        uri = f"facetime://{number.strip()}"
+        call_button_coords = self.generate_coords("FaceTime call button", self.obs)
+
+        call_x, call_y = (
+            93,
+            928,
+        )  # Hardcoded coordinates for FaceTime call button (full screen mode)
+        call_x_2, call_y_2 = (
+            123,
+            928,
+        )  # Calvin's facetime button location
+        return (
+            "import subprocess, time, pyautogui; "
+            f"subprocess.run(['open', {repr(uri)}], check=True); "
+            "time.sleep(2.0); "
+            f"pyautogui.click({call_x}, {call_y}, button='left'); "
+            "time.sleep(1.0); "
+            f"pyautogui.click({call_x_2}, {call_y_2}, button='left')"
+        )
+
+    @agent_action
     def type(
         self,
         element_description: Optional[str] = None,

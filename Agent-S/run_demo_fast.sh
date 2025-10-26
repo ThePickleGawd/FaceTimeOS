@@ -2,7 +2,9 @@
 
 python -m src.s3.app \
   --provider openai \
-  --model gpt-5 \
+  --model "grok-4-fast-non-reasoning" \
+  --model_url "https://api.x.ai/v1/" \
+  --model_api_key "$GROK_API_KEY" \
   --ground_provider huggingface \
   --ground_url https://umd80oz2cvp7m0p8.us-east-1.aws.endpoints.huggingface.cloud \
   --ground_model ui-tars-1.5-7b \

@@ -10,7 +10,8 @@
 
 : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY environment variable must be set}"
 
-agent_s --provider anthropic \
+python -m src.s3.app \
+    --provider anthropic \
     --model claude-sonnet-4-20250514 \
     --ground_provider anthropic \
     --ground_url https://api.anthropic.com \

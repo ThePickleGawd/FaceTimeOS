@@ -579,7 +579,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--enable_reflection",
         action="store_true",
-        default=True,
+        default=False,
         help="Enable reflection agent to assist the worker agent.",
     )
     parser.add_argument(
