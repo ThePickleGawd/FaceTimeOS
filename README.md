@@ -15,4 +15,4 @@ Our project is organized into three folders
 2. `backend` - Flask server to handle iMessage/FaceTime and generate voice transcriptions and replies
 3. `frontend` — UI to prompt and view current actions of Agent S
 
-TODO: Diagram of interaction
+![FaceTimeOS System Diagram](docs/diagram.png)

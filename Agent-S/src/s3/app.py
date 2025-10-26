@@ -233,20 +233,29 @@ def _sanitize_text(text: str) -> str:
     return "".join(sanitized_chars)
 
 
+last_voice_summary = 0  # global timestamp of last voice summary
+VOICE_COOLDOWN = 5.0  # seconds
+
+
 def _build_notification_payload(message: str) -> dict[str, object]:
+    global last_voice_summary
+
     sanitized_message = _sanitize_text(message)
     payload: dict[str, object] = {"original": sanitized_message}
 
+    # Always build text summary
     text_summary = _summarize_message(sanitized_message, "notification_text")
-    voice_summary = _summarize_message(sanitized_message, "notification_voice")
+    payload["text_summary"] = text_summary
 
-    limited_text = _limit_text(text_summary or sanitized_message, 50)
-    payload["text_summary"] = limited_text
-    payload["voice_summary"] = voice_summary or sanitized_message
+    # Only build voice summary if cooldown period has passed
+    current_time = time.time()
+    if current_time - last_voice_summary >= VOICE_COOLDOWN:
+        voice_summary = _summarize_message(sanitized_message, "notification_voice")
+        last_voice_summary = current_time
+    else:
+        voice_summary = ""  # or None, depending on what you prefer
 
-    if sanitized_message:
-        NOTIFICATION_HISTORY.append(sanitized_message)
-
+    payload["voice_summary"] = voice_summary
     return payload
 
 

@@ -11,4 +11,5 @@ uv run -m src.s3.app \
   --grounding_height 1080 \
   --model_temperature 1.0 \
   --enable_reflection \
+  --asi_one_api_key "$ASI_ONE_API_KEY"
   #--enable_local_env
