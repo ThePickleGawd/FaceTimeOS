@@ -631,7 +631,8 @@ def current_action():
 
     text = str(payload.get("voice_summary", "") or "").strip()
 
-    voice = "e58b0d7efca34eb38d5c4985e378abcb"  # fish.audio uses its built-in default voice when reference_id is unset
+    # voice = "e58b0d7efca34eb38d5c4985e378abcb"  # fish.audio uses its built-in default voice when reference_id is unset
+    voice = "b545c585f631496c914815291da4e893"  # woman voice
     audio_format = "mp3"  # fish.audio TTSRequest default format
 
     if text:

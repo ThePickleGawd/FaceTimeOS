@@ -131,13 +131,12 @@ def _summarize_message(
     message: str,
     style: Literal["notification_text", "notification_voice"],
 ) -> Optional[str]:
-    if len(message) <= 50 or not ASI_ONE_API_KEY or not ASI_ONE_ENDPOINT:
+    if len(message) <= 5 or not ASI_ONE_API_KEY or not ASI_ONE_ENDPOINT:
         return None
 
     # Only skip summarization for very short messages (<=15 chars)
     # This ensures messages like "Step 1/15: ..." get summarized
 
-    
     style_normalized = style.lower()
     if style_normalized == "notification_text":
         system_prompt = (
@@ -152,7 +151,9 @@ def _summarize_message(
         system_prompt = (
             "You are Agent-S, an assistant that produces a short, natural-sounding spoken update "
             "(<=160 characters) summarizing what the Agent-S desktop agent is doing in first person mode. Avoid emojis, filler, weird syntax."
-            "If you believe the user is trying to get you to stop. Print only: stopping"
+            "If you believe the user is trying to get you to stop. Print only: stopping."
+            "If you believe that the current message is unnatural or unneeded to say aloud (it's too explicit), don't say anything."
+            "Your top priority is to speak in first person and sound natural."
         )
         char_limit = 160 if style_normalized == "notification_voice" else None
 
@@ -406,7 +407,11 @@ def run_agent(
         if "done" in action_lower or "fail" in action_lower:
             status = "fail" if "fail" in action_lower else "done"
             try:
-                LOGGER.info("Task Complete!" if status == "done" else "Task Failed.")
+                LOGGER.info(
+                    "I'm done!"
+                    if status == "done"
+                    else "I messed up something. Let me know what to do next."
+                )
                 requests.post(
                     f"http://{SERVER_HOST}:{SERVER_PORT}/api/completetask",
                     json={"status": status, "action": action_text},
@@ -491,9 +496,9 @@ def _agent_worker(prompt: str) -> None:
 
         # Notify UI that agent has finished
         if was_stopped:
-            notify_current_action("Agent stopped.")
+            notify_current_action("Ok, I'm going to stop now.")
         else:
-            notify_current_action("Agent finished.")
+            notify_current_action("I'm done!")
 
         LOGGER.debug("Agent worker finished.")
 
@@ -540,7 +545,7 @@ def start_agent(prompt: str) -> None:
         STATE.thread = worker
 
     worker.start()
-    LOGGER.info("Agent started with new prompt.")
+    LOGGER.info("Ok I'm starting...")
 
 
 def pause_agent() -> None:
@@ -548,7 +553,7 @@ def pause_agent() -> None:
         if STATE.running and not STATE.paused:
             STATE.paused = True
             STATE.pause_event.clear()
-            LOGGER.info("Agent paused.")
+            LOGGER.info("Ok I'm pausing...")
 
 
 def resume_agent() -> None:
@@ -556,7 +561,7 @@ def resume_agent() -> None:
         if STATE.running and STATE.paused:
             STATE.paused = False
             STATE.pause_event.set()
-            LOGGER.info("Agent resumed.")
+            LOGGER.info("Ok I'm resuming...")
 
 
 @app.route("/api/chat", methods=["POST"])
@@ -773,7 +778,7 @@ def configure_agent(args: argparse.Namespace) -> None:
         enable_reflection=args.enable_reflection,
     )
 
-    LOGGER.info("Agent configured successfully with provider '%s'.", args.provider)
+    LOGGER.debug("Agent configured successfully with provider '%s'.", args.provider)
 
     if getattr(args, "asi_one_api_key", None):
         ASI_ONE_API_KEY = args.asi_one_api_key.strip()
@@ -810,7 +815,7 @@ def main() -> None:
     args = parser.parse_args()
     configure_agent(args)
 
-    LOGGER.info("Starting Agent-S Flask server on %s:%d", args.host, args.port)
+    LOGGER.debug("Starting Agent-S Flask server on %s:%d", args.host, args.port)
     app.run(host=args.host, port=args.port, debug=args.debug)
 
 
