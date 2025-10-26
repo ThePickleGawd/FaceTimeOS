@@ -418,10 +418,10 @@ class OSWorldACI(ACI):
         uri = f"facetime://{number.strip()}"
 
         # Notify the server that a call has started
-        server_host = os.getenv("SERVER_HOST", "127.0.0.1").strip() or "127.0.0.1"
+        server_host = "127.0.0.1"
         if server_host == "0.0.0.0":
             server_host = "127.0.0.1"
-        server_port = os.getenv("SERVER_PORT", "8003").strip() or "8003"
+        server_port = "8003"
         payload = {"number": str(number).strip()}
         try:
             requests.post(
@@ -429,6 +429,7 @@ class OSWorldACI(ACI):
                 json=payload,
                 timeout=2,
             ).raise_for_status()
+            # logger.info("Notified /api/call_started")
         except requests.RequestException as exc:
             logger.warning("Failed to notify /api/call_started: %s", exc)
 

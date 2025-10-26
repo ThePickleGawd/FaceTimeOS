@@ -4,9 +4,11 @@ from __future__ import annotations
 import logging
 import os
 from typing import Callable, Optional
+from dotenv import load_dotenv
 
 from fish_audio_sdk import ASRRequest, Session, TTSRequest  # type: ignore
 
+load_dotenv()
 
 class FishAudioError(RuntimeError):
 	"""Raised when the fish.audio SDK returns an error or unexpected payload."""
@@ -32,7 +34,7 @@ class FishAudioClient:
 			self._logger.exception("Unable to initialize fish.audio session")
 			raise FishAudioError("Failed to initialize fish.audio session") from exc
 
-	def transcribe_audio(self, audio_bytes: bytes, *, language: Optional[str] = None) -> str:
+	def transcribe_audio(self, audio_bytes: bytes, *, language: Optional[str] = "en") -> str:
 		"""Send raw audio bytes to the fish.audio ASR endpoint and return transcript."""
 		if not audio_bytes:
 			raise FishAudioError("audio_bytes must not be empty")

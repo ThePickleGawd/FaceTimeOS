@@ -25,7 +25,16 @@ interface ElectronAPI {
 
   onUnauthorized: (callback: () => void) => () => void
   onDebugError: (callback: (error: string) => void) => () => void
-  onCurrentActionUpdate: (callback: (action: { original: string; mode: string; message: string }) => void) => () => void
+  onCurrentActionUpdate: (
+    callback: (
+      action: {
+        original: string
+        text_summary: string
+        voice_summary: string
+        mode?: string
+      }
+    ) => void
+  ) => () => void
   takeScreenshot: () => Promise<void>
   moveWindowLeft: () => Promise<void>
   moveWindowRight: () => Promise<void>
@@ -167,8 +176,25 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.removeListener(PROCESSING_EVENTS.UNAUTHORIZED, subscription)
     }
   },
-  onCurrentActionUpdate: (callback: (action: { original: string; mode: string; message: string }) => void) => {
-    const subscription = (_: any, action: { original: string; mode: string; message: string }) => callback(action)
+  onCurrentActionUpdate: (
+    callback: (
+      action: {
+        original: string
+        text_summary: string
+        voice_summary: string
+        mode?: string
+      }
+    ) => void
+  ) => {
+    const subscription = (
+      _: any,
+      action: {
+        original: string
+        text_summary: string
+        voice_summary: string
+        mode?: string
+      }
+    ) => callback(action)
     ipcRenderer.on("current-action-update", subscription)
     return () => {
       ipcRenderer.removeListener("current-action-update", subscription)

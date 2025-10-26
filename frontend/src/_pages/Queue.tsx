@@ -175,17 +175,31 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   // Listen for current action updates from Flask server
   useEffect(() => {
     const unsubscribe = window.electronAPI.onCurrentActionUpdate((action) => {
-      // Update agent status with the message (shown in bar)
-      setAgentStatus(action.message)
+      const textSummary =
+        (typeof action?.text_summary === "string" && action.text_summary.trim()) ||
+        (typeof action?.voice_summary === "string" && action.voice_summary.trim()) ||
+        null
+
+      const originalText =
+        (typeof action?.original === "string" && action.original.trim()) ||
+        null
+
+      setAgentStatus(textSummary)
       setIsAgentRunning(true)
 
       // Add the original text to history (shown in expanded view)
-      setOriginalHistory((history) => [...history, action.original])
+      const historyEntry = originalText ?? textSummary
+      if (historyEntry) {
+        setOriginalHistory((history) => [...history, historyEntry])
+      }
 
       // Check if this is a completion message
-      if (action.message.toLowerCase().includes("completed") ||
-          action.message.toLowerCase().includes("finished") ||
-          action.message.toLowerCase().includes("done")) {
+      const normalized = textSummary?.toLowerCase() ?? ""
+      if (
+        normalized.includes("completed") ||
+        normalized.includes("finished") ||
+        normalized.includes("done")
+      ) {
         // Reset state after a short delay to show the completion message
         setTimeout(() => {
           setIsAgentRunning(false)
