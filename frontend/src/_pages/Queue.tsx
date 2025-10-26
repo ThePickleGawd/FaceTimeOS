@@ -34,6 +34,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const barRef = useRef<HTMLDivElement>(null)
   const agentTimeoutsRef = useRef<NodeJS.Timeout[]>([])
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
 
   const { data: screenshots = [], refetch } = useQuery<Array<{ path: string; preview: string }>, Error>(
     ["screenshots"],
@@ -83,7 +84,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }
 
-  const handleTogglePopup = () => {
+  const handleTogglePopup = () => { 
     setIsChatOpen(!isChatOpen)
   }
 
@@ -249,6 +250,40 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setChatInput(value)
   }
 
+  // Track mouse position for close button click-through
+  useEffect(() => {
+    if (!isChatOpen) return
+
+    let rafId: number | null = null
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (rafId) return
+
+      rafId = requestAnimationFrame(() => {
+        if (closeButtonRef.current) {
+          const rect = closeButtonRef.current.getBoundingClientRect()
+          const isOverButton =
+            e.clientX >= rect.left &&
+            e.clientX <= rect.right &&
+            e.clientY >= rect.top &&
+            e.clientY <= rect.bottom
+
+          if (isOverButton) {
+            window.electronAPI?.setWindowClickThrough(false)
+          }
+        }
+        rafId = null
+      })
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      if (rafId) cancelAnimationFrame(rafId)
+    }
+  }, [isChatOpen])
+
 
   return (
     <div
@@ -260,17 +295,19 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       }}
       className="select-none"
     >
-      <div className="bg-transparent w-full">
-        <div className="px-2 py-1">
-          <Toast
-            open={toastOpen}
-            onOpenChange={setToastOpen}
-            variant={toastMessage.variant}
-            duration={3000}
-          >
-            <ToastTitle>{toastMessage.title}</ToastTitle>
-            <ToastDescription>{toastMessage.description}</ToastDescription>
-          </Toast>
+      <div className="bg-transparent w-full" style={{ pointerEvents: "none" }}>
+        <div className="px-1 py-4" style={{ pointerEvents: "none" }}>
+          <div style={{ pointerEvents: "auto" }}>
+            <Toast
+              open={toastOpen}
+              onOpenChange={setToastOpen}
+              variant={toastMessage.variant}
+              duration={3000}
+            >
+              <ToastTitle>{toastMessage.title}</ToastTitle>
+              <ToastDescription>{toastMessage.description}</ToastDescription>
+            </Toast>
+          </div>
           <div style={{ pointerEvents: "auto" }}>
             <QueueCommands
               chatInput={chatInput}
@@ -287,20 +324,22 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
           {/* Conditional Text/Log View */}
           {isChatOpen && (
-            <div className="mt-4 w-full max-w-2xl mx-auto liquid-glass chat-container p-4 flex flex-col" style={{ pointerEvents: "auto" }}>
+            <div className="mt-4 w-full max-w-2xl mx-auto liquid-glass chat-container p-4 flex flex-col" style={{ pointerEvents: "none" }}>
             {/* Close button */}
             <div className="flex justify-between items-center mb-2">
               <h3 className="text-xs text-white/70 font-medium">
                 Agent Thought Process
               </h3>
               <button
+                ref={closeButtonRef}
                 onClick={() => setIsChatOpen(false)}
                 className="text-white/50 hover:text-white/90 transition-colors text-xs"
+                style={{ pointerEvents: "auto" }}
               >
                 ✕
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto max-h-64 min-h-[120px] font-mono">
+            <div className="flex-1 overflow-y-auto max-h-64 min-h-[120px] font-mono" style={{ pointerEvents: "none" }}>
               {originalHistory.length === 0 ? (
                 <div className="text-sm text-white/50 mt-8">
                   The agent's thought process and steps will appear here
