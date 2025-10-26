@@ -429,6 +429,7 @@ class OSWorldACI(ACI):
                 json=payload,
                 timeout=2,
             ).raise_for_status()
+            logger.info("Notified /api/call_started")
         except requests.RequestException as exc:
             logger.warning("Failed to notify /api/call_started: %s", exc)
 

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Level Monitor - Debug</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+            margin: 0;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: #00ff88;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+        }
+        
+        .meter-container {
+            background: #2a2a2a;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        .meter-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .meter-value {
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            color: #00ff88;
+        }
+        
+        .meter-bar-container {
+            background: #1a1a1a;
+            height: 40px;
+            border-radius: 5px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .meter-bar {
+            height: 100%;
+            transition: width 0.1s ease-out, background-color 0.2s;
+            border-radius: 5px;
+        }
+        
+        .meter-markers {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+            font-size: 11px;
+            color: #666;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .status.connected {
+            background: #00ff88;
+            color: #000;
+        }
+        
+        .status.disconnected {
+            background: #ff4444;
+            color: #fff;
+        }
+        
+        .status.speaking {
+            background: #ffaa00;
+            color: #000;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .info-box {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #00ff88;
+        }
+        
+        .info-label {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+        
+        .info-value {
+            font-size: 20px;
+            font-weight: bold;
+        }
+        
+        .controls {
+            background: #2a2a2a;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        button {
+            background: #00ff88;
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 0 10px;
+            transition: all 0.2s;
+        }
+        
+        button:hover {
+            background: #00dd77;
+            transform: translateY(-2px);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            background: #444;
+            color: #888;
+            cursor: not-allowed;
+            transform: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Audio Level Monitor</h1>
+        <div class="subtitle">Debug Console for Audio Recording & Playback</div>
+        
+        <div class="controls">
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="startRecordBtn" onclick="startRecording()" disabled>Start Recording</button>
+            <button id="stopRecordBtn" onclick="stopRecording()" disabled>Stop Recording</button>
+            <span id="connectionStatus" class="status disconnected">Disconnected</span>
+        </div>
+        
+        <div class="meter-container">
+            <div class="meter-title">
+                <span>📥 Input Audio Level (Recording)</span>
+                <span class="meter-value" id="inputLevel">-- dB</span>
+            </div>
+            <div class="meter-bar-container">
+                <div class="meter-bar" id="inputMeter"></div>
+            </div>
+            <div class="meter-markers">
+                <span>-60 dB</span>
+                <span>-40 dB</span>
+                <span>-20 dB</span>
+                <span>0 dB</span>
+            </div>
+        </div>
+        
+        <div class="meter-container">
+            <div class="meter-title">
+                <span>📤 Output Audio Level (Playback)</span>
+                <span class="meter-value" id="outputLevel">-- dB</span>
+            </div>
+            <div class="meter-bar-container">
+                <div class="meter-bar" id="outputMeter"></div>
+            </div>
+            <div class="meter-markers">
+                <span>-60 dB</span>
+                <span>-40 dB</span>
+                <span>-20 dB</span>
+                <span>0 dB</span>
+            </div>
+        </div>
+        
+        <div class="info-grid">
+            <div class="info-box">
+                <div class="info-label">Energy Level</div>
+                <div class="info-value" id="energyValue">0.000000</div>
+            </div>
+            <div class="info-box">
+                <div class="info-label">Speech Status</div>
+                <div class="info-value" id="speechStatus">
+                    <span class="status">Silent</span>
+                </div>
+            </div>
+            <div class="info-box">
+                <div class="info-label">Peak Input (dB)</div>
+                <div class="info-value" id="peakInput">-∞</div>
+            </div>
+            <div class="info-box">
+                <div class="info-label">Peak Output (dB)</div>
+                <div class="info-value" id="peakOutput">-∞</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let socket = null;
+        let peakInput = -Infinity;
+        let peakOutput = -Infinity;
+        
+        function connect() {
+            const serverUrl = 'http://localhost:5002';
+            socket = io(serverUrl);
+            
+            socket.on('connect', () => {
+                console.log('Connected to audio server');
+                updateConnectionStatus(true);
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('startRecordBtn').disabled = false;
+            });
+            
+            socket.on('disconnect', () => {
+                console.log('Disconnected from audio server');
+                updateConnectionStatus(false);
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('startRecordBtn').disabled = true;
+                document.getElementById('stopRecordBtn').disabled = true;
+            });
+            
+            socket.on('input_audio_level', (data) => {
+                updateInputLevel(data.level_db, data.energy, data.is_speaking);
+            });
+            
+            socket.on('output_audio_level', (data) => {
+                updateOutputLevel(data.level_db);
+            });
+            
+            socket.on('recording_started', () => {
+                console.log('Recording started');
+                document.getElementById('startRecordBtn').disabled = true;
+                document.getElementById('stopRecordBtn').disabled = false;
+            });
+            
+            socket.on('recording_stopped', () => {
+                console.log('Recording stopped');
+                document.getElementById('startRecordBtn').disabled = false;
+                document.getElementById('stopRecordBtn').disabled = true;
+            });
+        }
+        
+        function startRecording() {
+            if (socket) {
+                socket.emit('start_recording');
+            }
+        }
+        
+        function stopRecording() {
+            if (socket) {
+                socket.emit('stop_recording');
+            }
+        }
+        
+        function updateConnectionStatus(connected) {
+            const statusEl = document.getElementById('connectionStatus');
+            if (connected) {
+                statusEl.className = 'status connected';
+                statusEl.textContent = 'Connected';
+            } else {
+                statusEl.className = 'status disconnected';
+                statusEl.textContent = 'Disconnected';
+            }
+        }
+        
+        function updateInputLevel(db, energy, isSpeaking) {
+            // Update level display
+            document.getElementById('inputLevel').textContent = db.toFixed(1) + ' dB';
+            document.getElementById('energyValue').textContent = energy.toFixed(6);
+            
+            // Update speech status
+            const speechStatusEl = document.getElementById('speechStatus');
+            if (isSpeaking) {
+                speechStatusEl.innerHTML = '<span class="status speaking">Speaking</span>';
+            } else {
+                speechStatusEl.innerHTML = '<span class="status">Silent</span>';
+            }
+            
+            // Update peak
+            if (db > peakInput) {
+                peakInput = db;
+                document.getElementById('peakInput').textContent = peakInput.toFixed(1);
+            }
+            
+            // Update meter bar
+            updateMeterBar('inputMeter', db);
+        }
+        
+        function updateOutputLevel(db) {
+            // Update level display
+            document.getElementById('outputLevel').textContent = db.toFixed(1) + ' dB';
+            
+            // Update peak
+            if (db > peakOutput) {
+                peakOutput = db;
+                document.getElementById('peakOutput').textContent = peakOutput.toFixed(1);
+            }
+            
+            // Update meter bar
+            updateMeterBar('outputMeter', db);
+        }
+        
+        function updateMeterBar(meterId, db) {
+            const meter = document.getElementById(meterId);
+            
+            // Convert dB to percentage (assuming -60 dB to 0 dB range)
+            const minDb = -60;
+            const maxDb = 0;
+            let percentage = ((db - minDb) / (maxDb - minDb)) * 100;
+            percentage = Math.max(0, Math.min(100, percentage));
+            
+            meter.style.width = percentage + '%';
+            
+            // Color coding based on level
+            if (db > -6) {
+                meter.style.background = '#ff4444'; // Red - too loud
+            } else if (db > -12) {
+                meter.style.background = '#ffaa00'; // Orange - good
+            } else if (db > -30) {
+                meter.style.background = '#00ff88'; // Green - normal
+            } else {
+                meter.style.background = '#4488ff'; // Blue - quiet
+            }
+        }
+        
+        // Auto-connect on page load
+        window.addEventListener('load', () => {
+            console.log('Audio Level Monitor loaded. Click "Connect" to start.');
+        });
+    </script>
+</body>
+</html>

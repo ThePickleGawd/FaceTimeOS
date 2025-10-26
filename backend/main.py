@@ -8,6 +8,8 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
+import wave
 from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
@@ -42,6 +44,26 @@ sio = socketio.Client(logger=True, engineio_logger=False)
 CALL_SERVICE_HOST = os.getenv("CALL_SERVICE_HOST", "localhost")
 CALL_SERVICE_PORT = os.getenv("CALL_SERVICE_PORT", "5002")
 CALL_SERVICE_URL = f"http://{CALL_SERVICE_HOST}:{CALL_SERVICE_PORT}"
+
+# Audio format configuration (must mirror backend/call.py defaults)
+AUDIO_SAMPLE_RATE = int(os.getenv("CALL_AUDIO_SAMPLE_RATE", "48000"))
+AUDIO_CHANNELS = int(os.getenv("CALL_AUDIO_CHANNELS", "2"))
+AUDIO_SAMPLE_WIDTH = 2  # bytes (int16 PCM)
+
+
+def _pcm_to_wav_bytes(pcm_data: bytes) -> bytes:
+	"""Wrap raw PCM int16 audio data into a WAV container."""
+	if not pcm_data:
+		raise ValueError("PCM data must not be empty when converting to WAV")
+
+	buffer = io.BytesIO()
+	with wave.open(buffer, "wb") as wav_file:
+		wav_file.setnchannels(AUDIO_CHANNELS)
+		wav_file.setsampwidth(AUDIO_SAMPLE_WIDTH)
+		wav_file.setframerate(AUDIO_SAMPLE_RATE)
+		wav_file.writeframes(pcm_data)
+
+	return buffer.getvalue()
 
 
 class CallManager:
@@ -139,24 +161,63 @@ def on_disconnect():
 	call_manager.call_active = False
 
 
-@sio.on('user_utterance')
-def on_user_utterance(data):
-	"""Handle complete user utterance from call.py with VAD."""
+# Audio streaming buffer for accumulating chunks
+current_utterance_chunks = []
+utterance_start_time = None
+
+@sio.on('utterance_start')
+def on_utterance_start(data):
+	"""Handle start of user utterance."""
+	global current_utterance_chunks, utterance_start_time
+	current_utterance_chunks = []
+	utterance_start_time = data.get('timestamp', time.time())
+	logging.info("🎤 UTTERANCE START - Beginning audio stream from call.py")
+
+@sio.on('audio_chunk')
+def on_audio_chunk(data):
+	"""Handle incoming audio chunk during utterance."""
+	global current_utterance_chunks
 	try:
-		# Decode base64 audio
 		audio_b64 = data.get('audio')
-		duration = data.get('duration', 0)
-		
 		if not audio_b64:
-			logging.warning("No audio data in utterance")
 			return
-			
+		
+		# Decode and store chunk
 		audio_bytes = base64.b64decode(audio_b64)
-		logging.info(f"Received user utterance: {len(audio_bytes)} bytes, {duration:.2f}s duration")
+		current_utterance_chunks.append(audio_bytes)
+		# Log first few chunks, then every 10th chunk to avoid spam
+		if len(current_utterance_chunks) <= 5 or len(current_utterance_chunks) % 10 == 0:
+			logging.info(f"📦 Audio chunk #{len(current_utterance_chunks)}: {len(audio_bytes)} bytes")
+	except Exception as e:
+		logging.error(f"Error processing audio chunk: {e}")
+
+@sio.on('utterance_end')
+def on_utterance_end(data):
+	"""Handle end of user utterance - process complete audio."""
+	global current_utterance_chunks, utterance_start_time
+	try:
+		duration = data.get('duration', 0)
+		total_chunks = data.get('total_chunks', len(current_utterance_chunks))
+		
+		if not current_utterance_chunks:
+			logging.warning("No audio chunks received for utterance")
+			return
+		
+		# Combine all chunks into single audio buffer (raw PCM)
+		pcm_bytes = b''.join(current_utterance_chunks)
+		logging.info(f"🏁 UTTERANCE END - Received {len(pcm_bytes)} bytes of PCM from {len(current_utterance_chunks)} chunks, {duration:.2f}s duration")
+
+		# Convert to WAV container for downstream services
+		wav_bytes = _pcm_to_wav_bytes(pcm_bytes)
+		logging.info(f"🎧 Converted PCM to WAV ({len(wav_bytes)} bytes)")
+		
+		# Clear buffer
+		current_utterance_chunks = []
+		utterance_start_time = None
 		
 		# Transcribe the complete utterance
 		try:
-			transcript = audio.transcribe_audio_bytes(audio_bytes)
+			transcript = audio.transcribe_audio_bytes(wav_bytes)
 			logging.info(f"User said: {transcript}")
 			
 			if transcript.strip():
@@ -166,8 +227,9 @@ def on_user_utterance(data):
 					"metadata": {
 						"source": "facetime_call",
 						"call_active": call_manager.call_active,
-						"audio_length_bytes": len(audio_bytes),
-						"duration_seconds": duration
+						"audio_length_bytes": len(wav_bytes),
+						"duration_seconds": duration,
+						"audio_format": "wav"
 					}
 				}
 				
@@ -210,8 +272,17 @@ def on_user_utterance(data):
 			logging.error(f"Unexpected error during transcription: {e}")
 			
 	except Exception as e:
-		logging.error(f"Error handling user utterance: {e}")
+		logging.error(f"Error handling utterance end: {e}", exc_info=True)
 
+@sio.on('utterance_cancelled')
+def on_utterance_cancelled(data):
+	"""Handle cancelled utterance (e.g., too short)."""
+	global current_utterance_chunks, utterance_start_time
+	reason = data.get('reason', 'unknown')
+	duration = data.get('duration', 0)
+	logging.info(f"❌ UTTERANCE CANCELLED - Reason: {reason}, Duration: {duration:.2f}s")
+	current_utterance_chunks = []
+	utterance_start_time = None
 
 @sio.on('playback_interrupted')
 def on_playback_interrupted(data):

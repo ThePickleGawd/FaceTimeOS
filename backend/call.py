@@ -29,15 +29,22 @@ DEFAULT_CHANNELS = 2
 CHUNK_SIZE = 1024
 
 # Voice Activity Detection (VAD) configuration
-VAD_ENERGY_THRESHOLD = 0.01  # Energy threshold for voice detection
+# Energy is normalized RMS (0.0 to 1.0 scale after dividing by 32768)
+# Typical values: silence < 0.005, speech 0.01-0.05, loud 0.05+
+VAD_ENERGY_THRESHOLD = 0.001  # Energy threshold for voice detection (normalized scale)
 VAD_MIN_SPEECH_DURATION = 0.3  # Minimum speech duration in seconds
-VAD_MAX_SILENCE_DURATION = 0.8  # Maximum silence before ending utterance
+VAD_MAX_SILENCE_DURATION = 1.5  # Maximum silence before ending utterance
 VAD_BUFFER_DURATION = 0.1  # Pre-buffer duration to capture speech onset
 
 # Optional: Specify device names from environment
 # For system audio capture, use something like "BlackHole 2ch"
 INPUT_DEVICE_NAME = os.getenv("AUDIO_INPUT_DEVICE", None)
 OUTPUT_DEVICE_NAME = os.getenv("AUDIO_OUTPUT_DEVICE", None)
+
+# Debug configuration
+DEBUG_AUDIO_LEVELS = os.getenv("DEBUG_AUDIO_LEVELS", "false").lower() == "true"
+print(f"[STARTUP] DEBUG_AUDIO_LEVELS environment variable: {os.getenv('DEBUG_AUDIO_LEVELS', 'NOT SET')}")
+print(f"[STARTUP] DEBUG_AUDIO_LEVELS resolved to: {DEBUG_AUDIO_LEVELS}")
 
 
 class AudioManager:
@@ -65,8 +72,16 @@ class AudioManager:
         self.playback_interrupt_event = threading.Event()
         self.current_playback_stream = None
         
+        # Audio level monitoring for debugging
+        self.debug_audio_levels = DEBUG_AUDIO_LEVELS
+        self.last_input_level_emit = 0
+        self.last_output_level_emit = 0
+        self.level_emit_interval = 0.1  # Emit levels every 100ms
+        self.input_level_emit_count = 0  # Counter for debug logging
+        
         logger.info(f"AudioManager initialized")
         logger.info(f"Sample rate: {DEFAULT_SAMPLE_RATE}Hz, Channels: {DEFAULT_CHANNELS}, Chunk size: {CHUNK_SIZE}")
+        logger.info(f"Audio level debugging: {'ENABLED' if self.debug_audio_levels else 'DISABLED'}")
         
         if input_device:
             if self.input_device_index is not None:
@@ -93,6 +108,9 @@ class AudioManager:
             if default_output is not None:
                 device_info = sd.query_devices(default_output)
                 logger.info(f"Using system default output: {device_info['name']} (index {default_output})")
+        
+        if self.debug_audio_levels:
+            logger.info("Audio level monitoring enabled for debugging")
     
     def _find_device(self, device_name: str, device_type: str) -> Optional[int]:
         """Find device index by name."""
@@ -108,6 +126,20 @@ class AudioManager:
                     return idx
         logger.debug(f"{device_type.capitalize()} device '{device_name}' not found")
         return None
+    
+    def _calculate_audio_level_db(self, audio_data: np.ndarray) -> float:
+        """Calculate audio level in dB from audio data."""
+        # Calculate RMS (root mean square)
+        audio_float = audio_data.astype(np.float32)
+        rms = np.sqrt(np.mean(audio_float ** 2))
+        
+        # Convert to dB (with small epsilon to avoid log(0))
+        # Normalize by int16 max value (32768)
+        normalized_rms = rms / 32768.0
+        if normalized_rms < 1e-10:
+            return -100.0  # Very quiet
+        db = 20 * np.log10(normalized_rms)
+        return float(db)
 
     def _recording_worker(self):
         """Worker thread for continuous audio recording."""
@@ -135,9 +167,30 @@ class AudioManager:
         if status:
             logger.warning(f"Audio callback status: {status}")
         
-        # Calculate energy for VAD
-        audio_array = indata.astype(np.float32)
+        # Calculate energy for VAD (normalize by int16 max value)
+        audio_array = indata.astype(np.float32) / 32768.0  # Normalize to -1.0 to 1.0
         energy = np.sqrt(np.mean(audio_array ** 2))
+        
+        # Emit audio levels for debugging (throttled)
+        if self.debug_audio_levels and self.socketio:
+            current_time = time.time()
+            if current_time - self.last_input_level_emit >= self.level_emit_interval:
+                audio_level_db = self._calculate_audio_level_db(indata)
+                self.socketio.emit('input_audio_level', {
+                    'level_db': round(audio_level_db, 2),
+                    'energy': round(float(energy), 6),
+                    'is_speaking': self.is_speaking
+                }, namespace='/')
+                self.last_input_level_emit = current_time
+                self.input_level_emit_count += 1
+                # Log every 50 emissions (about every 5 seconds) to confirm it's working
+                if self.input_level_emit_count % 50 == 1:
+                    logger.info(f"Audio level debug active - Input: {audio_level_db:.1f} dB, Energy: {energy:.6f}, Speaking: {self.is_speaking} (emitted {self.input_level_emit_count} times)")
+        elif self.debug_audio_levels and not self.socketio:
+            # Log once if socketio is not available
+            if not hasattr(self, '_socketio_warning_logged'):
+                logger.warning("DEBUG_AUDIO_LEVELS enabled but socketio not available")
+                self._socketio_warning_logged = True
         
         # Maintain pre-buffer for capturing speech onset
         self.pre_buffer.append(indata.copy())
@@ -153,18 +206,29 @@ class AudioManager:
                 self.silence_frames = 0
                 # Add pre-buffer to capture speech onset
                 self.current_utterance = list(self.pre_buffer)
-                logger.debug("Speech started")
+                logger.info(f"Speech started (energy: {energy:.4f}, threshold: {VAD_ENERGY_THRESHOLD})")
+                
+                # Send utterance_start event
+                self._send_utterance_start()
+                
+                # Send pre-buffer chunks
+                for chunk in self.pre_buffer:
+                    self._send_audio_chunk(chunk)
                 
                 # Interrupt any ongoing playback
                 if self.playback_active:
                     self.interrupt_playback()
-                    
+            
+            # Send current audio chunk
+            self._send_audio_chunk(indata.copy())
             self.current_utterance.append(indata.copy())
             self.speech_frames += 1
             
         else:
             # Silence detected
             if self.is_speaking:
+                # Still send silence chunks during trailing silence
+                self._send_audio_chunk(indata.copy())
                 self.current_utterance.append(indata.copy())
                 self.silence_frames += 1
                 
@@ -175,10 +239,16 @@ class AudioManager:
                     speech_duration = len(self.current_utterance) * CHUNK_SIZE / DEFAULT_SAMPLE_RATE
                     
                     if speech_duration > VAD_MIN_SPEECH_DURATION:
-                        # Valid utterance, send to main.py
-                        self._send_utterance()
+                        # Valid utterance, send utterance_end
+                        self._send_utterance_end(speech_duration)
                     else:
-                        logger.debug(f"Discarding short utterance ({speech_duration:.2f}s)")
+                        logger.info(f"Discarding short utterance ({speech_duration:.2f}s < {VAD_MIN_SPEECH_DURATION}s minimum)")
+                        # Send utterance_cancelled event
+                        if self.socketio:
+                            self.socketio.emit('utterance_cancelled', {
+                                'reason': 'too_short',
+                                'duration': speech_duration
+                            }, namespace='/')
                     
                     # Reset state
                     self.is_speaking = False
@@ -215,23 +285,41 @@ class AudioManager:
         logger.info(f"Recording stopped. Total chunks sent: {self.audio_chunks_sent}")
         return True
 
-    def _send_utterance(self):
-        """Send complete utterance to main.py."""
-        if not self.current_utterance or not self.socketio:
+    def _send_utterance_start(self):
+        """Send utterance_start event to main.py."""
+        if not self.socketio:
             return
-            
-        # Combine all audio chunks
-        combined_audio = np.concatenate(self.current_utterance)
-        audio_bytes = combined_audio.astype(np.int16).tobytes()
         
-        # Encode and send via websocket
-        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-        self.socketio.emit('user_utterance', {
-            'audio': audio_b64,
-            'duration': len(self.current_utterance) * CHUNK_SIZE / DEFAULT_SAMPLE_RATE
+        self.socketio.emit('utterance_start', {
+            'timestamp': time.time()
         }, namespace='/')
+        logger.info("➡️  Sent utterance_start event to main.py")
+    
+    def _send_audio_chunk(self, audio_chunk: np.ndarray):
+        """Send a single audio chunk to main.py."""
+        if not self.socketio:
+            return
         
-        logger.info(f"Sent utterance: {len(audio_bytes)} bytes, {len(self.current_utterance)} chunks")
+        # Convert to bytes and encode
+        audio_bytes = audio_chunk.astype(np.int16).tobytes()
+        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+        
+        self.socketio.emit('audio_chunk', {
+            'audio': audio_b64,
+            'size': len(audio_bytes)
+        }, namespace='/')
+    
+    def _send_utterance_end(self, duration: float):
+        """Send utterance_end event to main.py."""
+        if not self.socketio:
+            return
+        
+        self.socketio.emit('utterance_end', {
+            'duration': duration,
+            'timestamp': time.time(),
+            'total_chunks': len(self.current_utterance)
+        }, namespace='/')
+        logger.info(f"✅ Sent utterance_end to main.py: {duration:.2f}s, {len(self.current_utterance)} chunks")
         self.audio_chunks_sent += 1
     
     def interrupt_playback(self):
@@ -271,6 +359,19 @@ class AudioManager:
                     break
                     
                 chunk = audio_array[i:i+chunk_samples]
+                
+                # Emit output audio levels for debugging (throttled)
+                if self.debug_audio_levels and self.socketio:
+                    current_time = time.time()
+                    if current_time - self.last_output_level_emit >= self.level_emit_interval:
+                        # Convert chunk to int16 for level calculation if needed
+                        chunk_int16 = chunk if chunk.dtype == np.int16 else chunk.astype(np.int16)
+                        audio_level_db = self._calculate_audio_level_db(chunk_int16)
+                        self.socketio.emit('output_audio_level', {
+                            'level_db': round(audio_level_db, 2)
+                        }, namespace='/')
+                        self.last_output_level_emit = current_time
+                
                 sd.play(chunk, samplerate=DEFAULT_SAMPLE_RATE, device=self.output_device_index)
                 sd.wait()
             
@@ -405,6 +506,7 @@ if __name__ == "__main__":
     port = int(os.getenv("CALL_SERVICE_PORT", "5002"))
     
     logger.info(f"Starting audio call server on {host}:{port}")
+    logger.info(f"DEBUG_AUDIO_LEVELS: {DEBUG_AUDIO_LEVELS}")
     logger.info(f"Available audio devices:")
     devices = sd.query_devices()
     for idx, device in enumerate(devices):
