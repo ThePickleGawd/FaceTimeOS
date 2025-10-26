@@ -344,33 +344,33 @@ class OSWorldACI(ACI):
             round(coordinates[1] * self.height / grounding_height),
         ]
 
-    @agent_action
-    def click(
-        self,
-        element_description: str,
-        num_clicks: int = 1,
-        button_type: str = "left",
-        hold_keys: List = [],
-    ):
-        """Click on the element
-        Args:
-            element_description:str, a detailed descriptions of which element to click on. This description should be at least a full sentence.
-            num_clicks:int, number of times to click the element
-            button_type:str, which mouse button to press can be "left", "middle", or "right"
-            hold_keys:List, list of keys to hold while clicking
-        """
-        coords1 = self.generate_coords(element_description, self.obs)
-        x, y = self.resize_coordinates(coords1)
-        command = "import pyautogui; "
+    # @agent_action
+    # def click(
+    #     self,
+    #     element_description: str,
+    #     num_clicks: int = 1,
+    #     button_type: str = "left",
+    #     hold_keys: List = [],
+    # ):
+    #     """Click on the element
+    #     Args:
+    #         element_description:str, a detailed descriptions of which element to click on. This description should be at least a full sentence.
+    #         num_clicks:int, number of times to click the element
+    #         button_type:str, which mouse button to press can be "left", "middle", or "right"
+    #         hold_keys:List, list of keys to hold while clicking
+    #     """
+    #     coords1 = self.generate_coords(element_description, self.obs)
+    #     x, y = self.resize_coordinates(coords1)
+    #     command = "import pyautogui; "
 
-        # TODO: specified duration?
-        for k in hold_keys:
-            command += f"pyautogui.keyDown({repr(k)}); "
-        command += f"""import pyautogui; pyautogui.click({x}, {y}, clicks={num_clicks}, button={repr(button_type)}); """
-        for k in hold_keys:
-            command += f"pyautogui.keyUp({repr(k)}); "
-        # Return pyautoguicode to click on the element
-        return command
+    #     # TODO: specified duration?
+    #     for k in hold_keys:
+    #         command += f"pyautogui.keyDown({repr(k)}); "
+    #     command += f"""import pyautogui; pyautogui.click({x}, {y}, clicks={num_clicks}, button={repr(button_type)}); """
+    #     for k in hold_keys:
+    #         command += f"pyautogui.keyUp({repr(k)}); "
+    #     # Return pyautoguicode to click on the element
+    #     return command
 
     @agent_action
     def switch_applications(self, app_code):
