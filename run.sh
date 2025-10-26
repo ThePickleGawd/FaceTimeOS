@@ -14,6 +14,7 @@ cd ..
 # Start Agent S
 cd Agent-S
 ./run_demo_fast.sh &
+# ./run_demo_best.sh &
 cd ..
 
 # Start frontend
