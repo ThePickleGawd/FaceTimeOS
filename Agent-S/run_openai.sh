@@ -2,7 +2,8 @@
 
 : "${OPENAI_API_KEY:?OPENAI_API_KEY environment variable must be set}"
 
-agent_s --provider openai \
+python -m src.s3.app \
+    --provider openai \
     --model gpt-5 \
     --ground_provider openai \
     --ground_url https://api.openai.com/v1/ \
