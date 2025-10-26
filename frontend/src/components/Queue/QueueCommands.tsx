@@ -29,22 +29,19 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (chatInput.trim() && !chatLoading) {
+      // Trigger glow animation when submitting
+      setIsGlowing(true)
+      setTimeout(() => {
+        setIsGlowing(false)
+        setShowPersistentGlow(true)
+      }, 1500)
+
       onChatSubmit()
       setIsInputActive(false)
     }
   }
 
   const handleBarClick = () => {
-    // Trigger both glow and sweep animations
-    setIsGlowing(true)
-    const glowTimeout = setTimeout(() => {
-      setIsGlowing(false)
-      // After animation completes, if agent is running, keep persistent glow
-      if (isAgentRunning) {
-        setShowPersistentGlow(true)
-      }
-    }, 1500) // Remove after animation completes (1.5s)
-
     if (isAgentRunning) {
       // If agent is running, toggle the popup
       onTogglePopup()
@@ -54,14 +51,21 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
         setIsInputActive(true)
       }
     }
-
-    // Cleanup timeout on unmount
-    return () => clearTimeout(glowTimeout)
   }
 
-  // Remove persistent glow when agent stops running
+  // Trigger glow animation when agent starts running (for iMessage)
+  // and remove persistent glow when agent stops
   React.useEffect(() => {
-    if (!isAgentRunning) {
+    if (isAgentRunning) {
+      // Agent just started - trigger the animation
+      setIsGlowing(true)
+      const timeout = setTimeout(() => {
+        setIsGlowing(false)
+        setShowPersistentGlow(true)
+      }, 1500)
+      return () => clearTimeout(timeout)
+    } else {
+      // Agent stopped - remove persistent glow
       setShowPersistentGlow(false)
     }
   }, [isAgentRunning])
