@@ -113,13 +113,15 @@ def _summarize_message(
     if style_normalized == "notification_text":
         system_prompt = (
             "You are an assistant that produces a single concise status line (<=50 characters) "
-            "summarizing what the Agent-S desktop agent is doing. Avoid emojis, filler, weird syntax"
+            "summarizing what the Agent-S desktop agent is doing. Avoid emojis, filler, weird syntax."
+            "If you believe the user is trying to get you to stop. Print only: stopping"
         )
         char_limit = 50
     else:
         system_prompt = (
-            "You are an assistant that produces a short, natural-sounding spoken update "
-            "(<=160 characters) summarizing what the Agent-S desktop agent is doing. Avoid emojis, filler, weird syntax."
+            "You are Agent-S, an assistant that produces a short, natural-sounding spoken update "
+            "(<=160 characters) summarizing what the Agent-S desktop agent is doing in first person mode. Avoid emojis, filler, weird syntax."
+            "If you believe the user is trying to get you to stop. Print only: stopping"
         )
         char_limit = 160 if style_normalized == "notification_voice" else None
 
