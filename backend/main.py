@@ -24,6 +24,9 @@ import socketio
 import audio
 
 
+# Global flag to track audio playback state
+_audio_playing = False
+
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
@@ -483,6 +486,8 @@ def _play_audio_bytes(
     output_device: Optional[str] = None,
 ) -> None:
     """Play synthesized audio through the requested output device if available."""
+    global _audio_playing
+    
     if not audio_bytes:
         logging.debug("No audio bytes provided for playback")
         return
@@ -495,6 +500,14 @@ def _play_audio_bytes(
     ) as exc:  # pragma: no cover - defensive: runtime environment specific
         logging.error("Audio playback libraries unavailable: %s", exc)
         return
+    
+    # Stop any currently playing audio to prevent queueing
+    if _audio_playing:
+        try:
+            sd.stop()
+            logging.info("Interrupted previous audio playback for new prompt")
+        except Exception as exc:
+            logging.debug("Failed to stop previous audio: %s", exc)
 
     device_name = (
         output_device
