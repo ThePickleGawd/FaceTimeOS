@@ -688,13 +688,11 @@ def call_started() -> Response:
 	number = payload.get("number")
 	
 	try:
-        
 		# Start the call session with the call.py service
-		# success = call_manager.start_call()
+		success = call_manager.start_call()
 		success = True
 		
 		if success:
-			
 			return jsonify({
 				"status": "success",
 				"message": "Call session started",
