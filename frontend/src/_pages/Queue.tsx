@@ -91,21 +91,26 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     if (!chatInput.trim()) return
 
     const userMessage = chatInput
-    setChatLoading(true)
     setChatInput("")
+
+    // Stop any existing agent thread first to prevent "active thread" errors
+    try {
+      await window.electronAPI.stopAgent()
+    } catch (err) {
+      console.log('No active agent to stop, continuing...')
+    }
 
     // Clear previous history and start fresh
     setOriginalHistory([])
 
-    // Start the agent
-    setIsAgentRunning(true)
-
-    // Start showing agent status
-    setAgentStatus("Agent is thinking...")
-
     // Clear previous timeouts
     agentTimeoutsRef.current.forEach(clearTimeout)
     agentTimeoutsRef.current = []
+
+    // Now start the new agent request
+    setChatLoading(true)
+    setIsAgentRunning(true)
+    setAgentStatus("Agent is thinking...")
 
     // Send message to Agent S via POST /api/chat
     // The actual status updates will come from POST /api/currentaction
@@ -123,9 +128,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const handlePauseAgent = async () => {
     if (isAgentRunning) {
-      // Pause the agent - send pause request to Agent S
+      // Stop the agent completely (changed from pause to stop for better reliability)
       try {
-        await window.electronAPI.pauseAgent()
+        await window.electronAPI.stopAgent()
         setIsAgentRunning(false)
         setAgentStatus(null)
         setChatLoading(false)
@@ -134,19 +139,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         agentTimeoutsRef.current.forEach(clearTimeout)
         agentTimeoutsRef.current = []
 
-        setOriginalHistory((history) => [...history, "Agent paused by user."])
+        setOriginalHistory((history) => [...history, "Agent stopped by user."])
       } catch (err) {
-        console.error('Error pausing agent:', err)
-      }
-    } else {
-      // Resume the agent - send resume request to Agent S
-      try {
-        await window.electronAPI.resumeAgent()
-        setIsAgentRunning(true)
-        setAgentStatus("Resuming...")
-        setOriginalHistory((history) => [...history, "Agent resumed by user."])
-      } catch (err) {
-        console.error('Error resuming agent:', err)
+        console.error('Error stopping agent:', err)
       }
     }
   }
@@ -185,6 +180,18 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
       // Add the original text to history (shown in expanded view)
       setOriginalHistory((history) => [...history, action.original])
+
+      // Check if this is a completion message
+      if (action.message.toLowerCase().includes("completed") ||
+          action.message.toLowerCase().includes("finished") ||
+          action.message.toLowerCase().includes("done")) {
+        // Reset state after a short delay to show the completion message
+        setTimeout(() => {
+          setIsAgentRunning(false)
+          setAgentStatus(null)
+          setChatLoading(false)
+        }, 2000)
+      }
     })
 
     return () => {
@@ -278,7 +285,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             />
           </div>
 
-          {/* Conditional Chat Interface */}
+          {/* Conditional Text/Log View */}
           {isChatOpen && (
             <div className="mt-4 w-full max-w-2xl mx-auto liquid-glass chat-container p-4 flex flex-col" style={{ pointerEvents: "auto" }}>
             {/* Close button */}
@@ -293,38 +300,32 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                 ✕
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto mb-3 p-3 rounded-lg bg-white/10 backdrop-blur-md max-h-64 min-h-[120px] glass-content border border-white/20 shadow-lg">
+            <div className="flex-1 overflow-y-auto max-h-64 min-h-[120px] font-mono">
               {originalHistory.length === 0 ? (
-                <div className="text-sm text-white/60 text-center mt-8">
+                <div className="text-sm text-white/50 mt-8">
                   The agent's thought process and steps will appear here
                   <br />
-                  <span className="text-xs text-white/40">Click the bar above and type a command to get started</span>
+                  <span className="text-xs text-white/30">Click the bar above and type a command to get started</span>
                 </div>
               ) : (
                 originalHistory.map((text, idx) => (
                   <div
                     key={idx}
-                    className="w-full flex justify-start mb-3"
+                    className="text-white/80 text-xs mb-2 leading-relaxed"
+                    style={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}
                   >
-                    <div
-                      className="max-w-full px-3 py-1.5 rounded-xl text-xs shadow-md backdrop-blur-sm border bg-white/85 text-gray-700 border-gray-200/50"
-                      style={{ wordBreak: "break-word", lineHeight: "1.4", whiteSpace: "pre-wrap" }}
-                    >
-                      {text}
-                    </div>
+                    {text}
                   </div>
                 ))
               )}
               {chatLoading && (
-                <div className="flex justify-start mb-3">
-                  <div className="bg-white/85 text-gray-600 px-3 py-1.5 rounded-xl text-xs backdrop-blur-sm border border-gray-200/50 shadow-md">
-                    <span className="inline-flex items-center">
-                      <span className="animate-pulse text-gray-400">●</span>
-                      <span className="animate-pulse animation-delay-200 text-gray-400">●</span>
-                      <span className="animate-pulse animation-delay-400 text-gray-400">●</span>
-                      <span className="ml-2">Agent is thinking...</span>
-                    </span>
-                  </div>
+                <div className="text-white/60 text-xs mb-2">
+                  <span className="inline-flex items-center">
+                    <span className="animate-pulse">●</span>
+                    <span className="animate-pulse animation-delay-200">●</span>
+                    <span className="animate-pulse animation-delay-400">●</span>
+                    <span className="ml-2">Agent is thinking...</span>
+                  </span>
                 </div>
               )}
               {/* Auto-scroll anchor */}

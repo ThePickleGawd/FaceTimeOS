@@ -311,21 +311,26 @@ def run_agent(
             LOGGER.debug("Stop requested after prediction step %d", step + 1)
             break
 
-        if "done" in code[0].lower() or "fail" in code[0].lower():
-            if platform.system() == "Darwin":
-                os.system(
-                    'osascript -e \'display dialog "Task Completed" with title "OpenACI Agent" buttons "OK" default button "OK"\''
+        action_text = code[0]
+        action_lower = action_text.lower()
+
+        if "done" in action_lower or "fail" in action_lower:
+            status = "fail" if "fail" in action_lower else "done"
+            try:
+                LOGGER.info("Task Complete!" if status == "done" else "Task Failed.")
+                requests.post(
+                    f"http://{SERVER_HOST}:{SERVER_PORT}/api/completetask",
+                    json={"status": status, "action": action_text},
+                    timeout=2,
                 )
-            elif platform.system() == "Linux":
-                os.system(
-                    'zenity --info --title="OpenACI Agent" --text="Task Completed" --width=200 --height=100'
-                )
+            except requests.RequestException:
+                pass
             break
 
-        if "next" in code[0].lower():
+        if "next" in action_lower:
             continue
 
-        if "wait" in code[0].lower():
+        if "wait" in action_lower:
             LOGGER.info("⏳ Agent requested wait...")
             for _ in range(50):
                 if STATE.stop_event.is_set():
@@ -574,7 +579,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--enable_reflection",
         action="store_true",
-        default=True,
+        default=False,
         help="Enable reflection agent to assist the worker agent.",
     )
     parser.add_argument(

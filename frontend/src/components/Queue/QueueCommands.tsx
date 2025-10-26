@@ -19,6 +19,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   chatLoading,
   agentStatus,
   isAgentRunning,
+  onPauseAgent,
   onTogglePopup
 }) => {
   const [isInputActive, setIsInputActive] = useState(false)
@@ -75,6 +76,21 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
               <span className="text-white/70">Agent is ready</span>
             )}
           </div>
+        )}
+
+        {/* Stop Button - Only show when agent is running */}
+        {isAgentRunning && (
+          <button
+            onClick={onPauseAgent}
+            className="px-2 py-2 text-white/60 hover:text-red-400 transition-colors flex items-center"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            title="Stop Agent"
+            type="button"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <rect x="3" y="3" width="8" height="8" rx="1"/>
+            </svg>
+          </button>
         )}
 
         {/* Drag Handle - Draggable */}

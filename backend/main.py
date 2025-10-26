@@ -89,6 +89,9 @@ class ScreenshotError(RuntimeError):
 	pass
 
 
+_last_requester_phone: Optional[str] = None
+
+
 def capture_screenshot() -> str:
 	"""Capture the primary display and return it base64 encoded."""
 
@@ -146,21 +149,52 @@ def complete_task():
 	payload = request.get_json(silent=True) or {}
 	logging.info("Received complete task payload: %s", payload)
 
+	phone_number = _last_requester_phone
+	if not phone_number:
+		logging.warning("No phone number available for task completion notification")
+		return jsonify({"error": "phone_number unavailable"}), 400
+	phone_number = phone_number.strip()
+
 	try:
 		screenshot_b64 = capture_screenshot()
 	except ScreenshotError as exc:
 		logging.exception("Screenshot capture failed")
 		return jsonify({"error": str(exc)}), 500
 
-	forward_payload: Dict[str, Any] = {
-		**payload,
-		"screenshot": screenshot_b64,
-	}
-	response = _safe_post(ui_client, "/api/completetask", forward_payload)
-	if response is None:
-		return jsonify({"status": "queued", "ui_forwarded": False}), 202
+	action_text = payload.get("action")
+	if action_text is not None and not isinstance(action_text, str):
+		action_text = str(action_text)
 
-	return _forward_response(response)
+	status = payload.get("status")
+	message_parts = []
+	if isinstance(status, str) and status.strip():
+		message_parts.append(f"Task {status.strip()}")
+	if action_text and action_text.strip():
+		message_parts.append(action_text.strip())
+	message_text = "\n".join(message_parts) if message_parts else "Task update"
+
+	temp_dir = Path(tempfile.gettempdir())
+	attachment_path = temp_dir / f"agent_s_task_{uuid4().hex}.png"
+	try:
+		attachment_path.write_bytes(base64.b64decode(screenshot_b64))
+	except (ValueError, OSError) as exc: 
+		return jsonify({"error": f"Unable to prepare screenshot: {exc}"}), 500
+
+	try:
+		forward_payload = {
+			"target": phone_number,
+			"text": message_text,
+			"attachments": [str(attachment_path)],
+		}
+		response = _safe_post(imessage_bridge_client, "/api/send_imessage", forward_payload)
+		if response is None:
+			return jsonify({"status": "failed", "bridge_forwarded": False}), 502
+		return _forward_response(response)
+	finally:
+		try:
+			attachment_path.unlink(missing_ok=True)
+		except OSError:
+			logging.warning("Could not delete temporary attachment %s", attachment_path)
 
 
 @app.route("/api/currentaction", methods=["POST"])
@@ -231,10 +265,30 @@ def send_imessage_endpoint() -> Any:
 def new_imessage() -> Any:
 	payload = request.get_json(silent=True) or {}
 	logging.info("New iMessage payload: %s", payload)
-	
+
+	phone_number = payload.get("phone_number")
+	if isinstance(phone_number, str) and phone_number.strip():
+		global _last_requester_phone
+		_last_requester_phone = phone_number.strip()
+
+	message_text = payload.get("text")
+	if message_text is None:
+		message_text = ""
+	elif not isinstance(message_text, str):
+		message_text = str(message_text)
+
+	if phone_number and isinstance(phone_number, str) and phone_number.strip():
+		prompt_body = message_text.strip()
+		if prompt_body:
+			prompt = f"Message from {phone_number.strip()}:\n{prompt_body}"
+		else:
+			prompt = f"Message from {phone_number.strip()}."
+	else:
+		prompt = message_text
+
 	# Forward to agent_s for LLM processing
 	forward_payload: Dict[str, Any] = {
-		"prompt": payload.get("text", ""),
+		"prompt": prompt,
 		"metadata": {k: v for k, v in payload.items() if k != "text"},
 	}
 	response = _safe_post(agent_s_client, "/api/chat", forward_payload)
