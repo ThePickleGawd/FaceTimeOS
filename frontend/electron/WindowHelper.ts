@@ -342,4 +342,16 @@ export class WindowHelper {
       Math.round(this.currentY)
     )
   }
+
+  public setIgnoreMouseEvents(ignore: boolean): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+
+    if (ignore) {
+      // Click-through enabled
+      this.mainWindow.setIgnoreMouseEvents(true, { forward: true })
+    } else {
+      // Click-through disabled (interactive)
+      this.mainWindow.setIgnoreMouseEvents(false)
+    }
+  }
 }

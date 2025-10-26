@@ -14,6 +14,7 @@ declare global {
         height: number
       }) => Promise<void>
       getScreenshots: () => Promise<Array<{ path: string; preview: string }>>
+      setWindowClickThrough: (clickThrough: boolean) => Promise<void>
 
       //GLOBAL EVENTS
       //TODO: CHECK THAT PROCESSING NO SCREENSHOTS AND TAKE SCREENSHOTS ARE BOTH CONDITIONAL

@@ -25,6 +25,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   const [isInputActive, setIsInputActive] = useState(false)
   const [isGlowing, setIsGlowing] = useState(false)
   const [showPersistentGlow, setShowPersistentGlow] = useState(false)
+  const formRef = React.useRef<HTMLFormElement>(null)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -70,9 +71,46 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
     }
   }, [isAgentRunning])
 
+  // Track mouse position to enable/disable click-through
+  React.useEffect(() => {
+    let rafId: number | null = null
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (rafId) return // Debounce using requestAnimationFrame
+
+      rafId = requestAnimationFrame(() => {
+        if (formRef.current) {
+          const rect = formRef.current.getBoundingClientRect()
+          const isOverBar =
+            e.clientX >= rect.left &&
+            e.clientX <= rect.right &&
+            e.clientY >= rect.top &&
+            e.clientY <= rect.bottom
+
+          window.electronAPI?.setWindowClickThrough(!isOverBar)
+        }
+        rafId = null
+      })
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+
+    // Enable click-through initially
+    window.electronAPI?.setWindowClickThrough(true)
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      if (rafId) cancelAnimationFrame(rafId)
+    }
+  }, [])
+
   return (
-    <div className="w-full max-w-2xl mx-auto">
-      <form onSubmit={handleSubmit} className={`text-xs text-slate-300 liquid-glass-bar draggable-area flex items-center ${isGlowing ? 'glowing' : ''} ${showPersistentGlow ? 'glowing-persistent' : ''}`}>
+    <div className="w-full max-w-2xl mx-auto py-1">
+      <form
+        ref={formRef}
+        onSubmit={handleSubmit}
+        className={`text-xs text-slate-300 liquid-glass-bar draggable-area flex items-center ${isGlowing ? 'glowing' : ''} ${showPersistentGlow ? 'glowing-persistent' : ''}`}
+      >
         {/* Main Content Area - Clickable, Not Draggable */}
         {isInputActive && !isAgentRunning ? (
           <div className="flex-1 px-4 py-2 text-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
