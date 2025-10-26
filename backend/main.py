@@ -550,19 +550,13 @@ def call_started() -> Response:
 	logging.info(f"Received call_started notification from Agent-S: {payload}")
 	
 	# Extract call metadata if provided
-	caller_info = payload.get("caller")
-	call_id = payload.get("call_id")
-	metadata = payload.get("metadata", {})
+	number = payload.get("number")
 	
 	try:
 		# Start the call session with the call.py service
 		success = call_manager.start_call()
 		
 		if success:
-			# Store call information if needed
-			if caller_info:
-				global _last_requester_phone
-				_last_requester_phone = caller_info
 			
 			return jsonify({
 				"status": "success",
