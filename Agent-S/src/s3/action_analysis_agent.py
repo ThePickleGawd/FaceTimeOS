@@ -192,7 +192,7 @@ def create_metadata(metadata: dict[str, str]) -> ChatMessage:
 
 @chat_proto.on_message(ChatMessage)
 async def on_chat(ctx: Context, sender: str, msg: ChatMessage):
-    ctx.logger.info(f"[chat] from={sender} id={msg.msg_id}")
+    ctx.logger.debug(f"[chat] from={sender} id={msg.msg_id}")
 
     # Ack ASAP
     await ctx.send(
@@ -253,7 +253,7 @@ async def on_chat(ctx: Context, sender: str, msg: ChatMessage):
 
 @chat_proto.on_message(ChatAcknowledgement)
 async def on_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
-    ctx.logger.info(f"[ack] from={sender} acked={msg.acknowledged_msg_id}")
+    ctx.logger.debug(f"[ack] from={sender} acked={msg.acknowledged_msg_id}")
 
 
 # Register protocol (publish manifest for discovery)

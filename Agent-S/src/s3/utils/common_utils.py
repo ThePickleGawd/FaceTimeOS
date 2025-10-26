@@ -100,7 +100,7 @@ def call_llm_formatted(generator, format_checkers, **kwargs):
                 "content": [{"type": "text", "text": response}],
             }
         )
-        logger.info(f"Bad response: {response}")
+        logger.debug(f"Bad response: {response}")
         delimiter = "\n- "
         formatting_feedback = f"- {delimiter.join(feedback_msgs)}"
         messages.append(
@@ -116,7 +116,7 @@ def call_llm_formatted(generator, format_checkers, **kwargs):
                 ],
             }
         )
-        logger.info("Feedback:\n%s", formatting_feedback)
+        logger.debug("Feedback:\n%s", formatting_feedback)
 
         attempt += 1
         if attempt == max_retries:

@@ -598,26 +598,26 @@ class OSWorldACI(ACI):
         - File management: bulk operations, file processing, content extraction
         - System utilities: configuration, setup, automation
         """
-        logger.info("=" * 50)
-        logger.info("GROUNDING AGENT: Calling Code Agent")
-        logger.info("=" * 50)
+        logger.debug("=" * 50)
+        logger.debug("GROUNDING AGENT: Calling Code Agent")
+        logger.debug("=" * 50)
 
         # **CRITICAL**: Only use provided task for specific subtasks, otherwise use original task instruction
         if task is not None:
             # This is a subtask - use the provided task
             task_to_execute = task
-            logger.info(f"Executing SUBTASK: {task_to_execute}")
+            logger.debug(f"Executing SUBTASK: {task_to_execute}")
         else:
             # This is a full task - use the original task instruction to prevent hallucination
             task_to_execute = self.current_task_instruction
-            logger.info(f"Executing FULL TASK: {task_to_execute}")
+            logger.debug(f"Executing FULL TASK: {task_to_execute}")
 
         if task_to_execute:
             print("obs keys: ", self.obs.keys())
             screenshot = self.obs.get("screenshot", "") if self.obs else ""
-            logger.info(f"Screenshot available: {'Yes' if screenshot else 'No'}")
+            logger.debug(f"Screenshot available: {'Yes' if screenshot else 'No'}")
 
-            logger.info("Executing code agent...")
+            logger.debug("Executing code agent...")
             result = self.code_agent.execute(
                 task_to_execute, screenshot, self.env.controller
             )
@@ -625,14 +625,14 @@ class OSWorldACI(ACI):
             # Store the result for the worker to access
             self.last_code_agent_result = result
 
-            logger.info("Code agent execution completed")
-            logger.info(f"Result - Completion reason: {result['completion_reason']}")
-            logger.info(f"Steps executed: {result['steps_executed']}")
-            logger.info(f"Summary: {result['summary']}")
+            logger.debug("Code agent execution completed")
+            logger.debug(f"Result - Completion reason: {result['completion_reason']}")
+            logger.debug(f"Steps executed: {result['steps_executed']}")
+            logger.debug(f"Summary: {result['summary']}")
 
-            logger.info("=" * 50)
-            logger.info("GROUNDING AGENT: Code Agent Call Finished")
-            logger.info("=" * 50)
+            logger.debug("=" * 50)
+            logger.debug("GROUNDING AGENT: Code Agent Call Finished")
+            logger.debug("=" * 50)
 
             # Return code to be executed in the environment
             return "import time; time.sleep(2.222)"

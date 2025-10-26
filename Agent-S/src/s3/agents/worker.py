@@ -172,8 +172,8 @@ class Worker(BaseModule):
                     full_reflection
                 )
                 self.reflections.append(reflection)
-                logger.info("REFLECTION THOUGHTS: %s", reflection_thoughts)
-                logger.info("REFLECTION: %s", reflection)
+                logger.debug("REFLECTION THOUGHTS: %s", reflection_thoughts)
+                logger.debug("REFLECTION: %s", reflection)
         return reflection, reflection_thoughts
 
     def generate_next_action(self, instruction: str, obs: Dict) -> Tuple[Dict, List]:
@@ -288,7 +288,7 @@ class Worker(BaseModule):
                             if "thoughts" in step:
                                 f.write(f"Thoughts: {step['thoughts']}\n")
 
-                logger.info(f"Code agent result saved to: {filename}")
+                logger.debug(f"Code agent result saved to: {filename}")
             except Exception as e:
                 logger.error(f"Failed to save code agent result to file: {e}")
 
@@ -333,7 +333,7 @@ class Worker(BaseModule):
                     elif i == 3 and total_steps > 5:
                         log_message += f"... (truncated {total_steps - 5} steps) ...\n"
 
-            logger.info(
+            logger.debug(
                 f"WORKER_CODE_AGENT_RESULT_SECTION - Step {self.turn_count + 1}: Code agent result added to generator message:\n{log_message}"
             )
 

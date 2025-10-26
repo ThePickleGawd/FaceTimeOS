@@ -1,7 +1,10 @@
-# Kill all background jobs on script exit
-trap 'kill $(jobs -p) 2>/dev/null' EXIT
+#!/bin/bash
+set -e
 
-# Start backend server
+# Kill all background jobs on exit or Ctrl+C
+trap 'kill 0' EXIT INT
+
+# Start backend services
 cd backend
 uv run main.py &
 uv run imessage_bridge.py &
@@ -13,9 +16,10 @@ cd Agent-S
 ./run_grok.sh &
 cd ..
 
-# Start frontend UI
+# Start frontend
 cd frontend
 npm start &
 cd ..
 
-wait  # wait for background jobs (so trap works)
+# Wait for everything
+wait

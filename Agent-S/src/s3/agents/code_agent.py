@@ -32,7 +32,7 @@ def extract_code_block(action: str) -> Tuple[Optional[str], Optional[str]]:
 def execute_code(code_type: str, code: str, env_controller) -> Dict:
     """Execute code based on its type."""
     # Log the full code being executed (untruncated)
-    logger.info(f"CODING_AGENT_CODE_EXECUTION - Type: {code_type}\nCode:\n{code}")
+    logger.debug(f"CODING_AGENT_CODE_EXECUTION - Type: {code_type}\nCode:\n{code}")
 
     try:
         if code_type == "bash":
@@ -99,7 +99,7 @@ class CodeAgent:
         self.budget = budget
         self.agent = None
 
-        logger.info(f"CodeAgent initialized with budget={budget}")
+        logger.debug(f"CodeAgent initialized with budget={budget}")
         self.reset()
 
     def reset(self):
@@ -121,8 +121,8 @@ class CodeAgent:
         print(f"Budget: {self.budget} steps")
         print("=" * 60)
 
-        logger.info(f"Starting code execution for task: {task_instruction}")
-        logger.info(f"Budget: {self.budget} steps")
+        logger.debug(f"Starting code execution for task: {task_instruction}")
+        logger.debug(f"Budget: {self.budget} steps")
 
         self.reset()
 
@@ -136,7 +136,7 @@ class CodeAgent:
         execution_history = []
 
         while step_count < self.budget:
-            logger.info(f"Step {step_count + 1}/{self.budget}")
+            logger.debug(f"Step {step_count + 1}/{self.budget}")
 
             # Get assistant response (thoughts and code)
             response = call_llm_safe(self.agent, temperature=1)
@@ -148,7 +148,7 @@ class CodeAgent:
             print("=" * 60)
 
             # Log the latest message from the coding agent (untruncated)
-            logger.info(
+            logger.debug(
                 f"CODING_AGENT_LATEST_MESSAGE - Step {step_count + 1}:\n{response}"
             )
 
@@ -227,7 +227,7 @@ class CodeAgent:
 
                 # Remove None entries and join
                 formatted_log = "\n".join([line for line in log_lines if line])
-                logger.info(formatted_log)
+                logger.debug(formatted_log)
             else:
                 print(f"\n⚠️  NO CODE BLOCK FOUND - Step {step_count + 1}")
                 print("-" * 50)
@@ -236,7 +236,7 @@ class CodeAgent:
 
                 logger.warning(f"Step {step_count + 1}: No code block found in action")
                 result = {"status": "skipped", "message": "No code block found"}
-                logger.info(
+                logger.debug(
                     f"CODING_AGENT_EXECUTION_RESULT - Step {step_count + 1}:\n"
                     f"Status: skipped\n"
                     f"Message:\n{'-' * 40}\n{result['message']}\n{'-' * 40}"
@@ -260,7 +260,7 @@ class CodeAgent:
             completion_reason = f"BUDGET_EXHAUSTED_AFTER_{step_count}_STEPS"
 
         # Generate final summary
-        logger.info("Generating execution summary")
+        logger.debug("Generating execution summary")
         summary = self._generate_summary(execution_history, task_instruction)
 
         result = {
@@ -280,10 +280,10 @@ class CodeAgent:
     ) -> str:
         """Generate summary of code execution session."""
         if not execution_history:
-            logger.info("No execution history to summarize")
+            logger.debug("No execution history to summarize")
             return "No actions were executed."
 
-        logger.info(f"Generated summary for {len(execution_history)} steps")
+        logger.debug(f"Generated summary for {len(execution_history)} steps")
 
         # Build detailed execution context for summary agent
         execution_context = f"Task: {task_instruction}\n\nExecution Steps:\n"
