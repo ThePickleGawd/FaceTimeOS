@@ -45,11 +45,12 @@ CALL_SERVICE_URL = f"http://{CALL_SERVICE_HOST}:{CALL_SERVICE_PORT}"
 
 
 class CallManager:
-	"""Manages WebSocket connection and audio streaming with call.py service."""
+	"""Manages WebSocket connection and audio output to call.py service."""
 	
 	def __init__(self):
 		self.connected = False
 		self.call_active = False
+		self.playback_in_progress = False
 		
 	def connect_to_call_service(self):
 		"""Establish WebSocket connection to call.py service."""
@@ -99,14 +100,25 @@ class CallManager:
 		return False
 	
 	def send_audio_to_output(self, audio_bytes: bytes):
-		"""Send audio to be played through the output device."""
-		if self.connected:
+		"""Send audio to be played through the FaceTime output device."""
+		if not self.connected:
+			logging.error("Not connected to call service, cannot send audio")
+			return False
+			
+		if not self.call_active:
+			logging.warning("No active call, cannot send audio")
+			return False
+			
+		try:
 			# Encode audio as base64 for transmission
 			audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
 			sio.emit('audio_input', {'audio': audio_b64})
-			logging.debug(f"Sent {len(audio_bytes)} bytes of audio to output")
-		else:
-			logging.error("Not connected to call service, cannot send audio")
+			self.playback_in_progress = True
+			logging.debug(f"Sent {len(audio_bytes)} bytes of audio to FaceTime output")
+			return True
+		except Exception as e:
+			logging.error(f"Failed to send audio: {e}")
+			return False
 
 
 # Initialize call manager
@@ -127,72 +139,84 @@ def on_disconnect():
 	call_manager.call_active = False
 
 
-@sio.on('audio_stream')
-def on_audio_stream(data):
-	"""Handle incoming audio from the user through the call."""
+@sio.on('user_utterance')
+def on_user_utterance(data):
+	"""Handle complete user utterance from call.py with VAD."""
 	try:
 		# Decode base64 audio
 		audio_b64 = data.get('audio')
-		if audio_b64:
-			audio_bytes = base64.b64decode(audio_b64)
-			logging.debug(f"Received {len(audio_bytes)} bytes of audio from user")
+		duration = data.get('duration', 0)
+		
+		if not audio_b64:
+			logging.warning("No audio data in utterance")
+			return
 			
-			# Transcribe the audio
-			try:
-				transcript = audio.transcribe_audio_bytes(audio_bytes)
-				logging.info(f"User said: {transcript}")
-				
-				if transcript.strip():
-					# Forward transcript to Agent-S for processing
-					agent_payload = {
-						"prompt": transcript,
-						"metadata": {
-							"source": "facetime_call",
-							"call_active": call_manager.call_active,
-							"audio_length_bytes": len(audio_bytes)
-						}
+		audio_bytes = base64.b64decode(audio_b64)
+		logging.info(f"Received user utterance: {len(audio_bytes)} bytes, {duration:.2f}s duration")
+		
+		# Transcribe the complete utterance
+		try:
+			transcript = audio.transcribe_audio_bytes(audio_bytes)
+			logging.info(f"User said: {transcript}")
+			
+			if transcript.strip():
+				# Forward transcript to Agent-S for processing
+				agent_payload = {
+					"prompt": transcript,
+					"metadata": {
+						"source": "facetime_call",
+						"call_active": call_manager.call_active,
+						"audio_length_bytes": len(audio_bytes),
+						"duration_seconds": duration
 					}
-					
-					# Send to Agent-S and get response
-					try:
-						response = _safe_post(agent_s_client, "/api/chat", agent_payload)
-						
-						if response and response.status_code == 200:
-							result = response.json()
-							response_text = result.get("response", "")
-							
-							if response_text:
-								logging.info(f"Agent-S response: {response_text[:100]}...")
-								
-								# Convert response to speech and send back through call
-								try:
-									response_audio = audio.synthesize_speech_from_text(response_text)
-									call_manager.send_audio_to_output(response_audio)
-									logging.debug(f"Sent {len(response_audio)} bytes of synthesized audio to call")
-								except Exception as e:
-									logging.error(f"Failed to synthesize speech: {e}")
-						else:
-							# Fallback response if Agent-S is unavailable
-							logging.warning("Agent-S unavailable, using fallback response")
-							fallback_text = "I understand. Let me process that for you."
-							
-							try:
-								fallback_audio = audio.synthesize_speech_from_text(fallback_text)
-								call_manager.send_audio_to_output(fallback_audio)
-							except Exception as e:
-								logging.error(f"Failed to synthesize fallback speech: {e}")
-								
-					except Exception as e:
-						logging.error(f"Error communicating with Agent-S: {e}")
-						
-			except audio.FishAudioError as e:
-				logging.error(f"Failed to transcribe audio: {e}")
-				# Audio might be too short or corrupted, skip processing
-			except Exception as e:
-				logging.error(f"Unexpected error during transcription: {e}")
+				}
 				
+				# Send to Agent-S and get response
+				try:
+					response = _safe_post(agent_s_client, "/api/chat", agent_payload)
+					
+					if response and response.status_code == 200:
+						result = response.json()
+						response_text = result.get("response", "")
+						
+						if response_text:
+							logging.info(f"Agent-S response: {response_text[:100]}...")
+							
+							# Convert response to speech and send back through call
+							try:
+								response_audio = audio.synthesize_speech_from_text(response_text)
+								call_manager.send_audio_to_output(response_audio)
+								logging.info(f"Sent {len(response_audio)} bytes of synthesized audio to FaceTime")
+							except Exception as e:
+								logging.error(f"Failed to synthesize speech: {e}")
+					else:
+						# Fallback response if Agent-S is unavailable
+						logging.warning("Agent-S unavailable, using fallback response")
+						fallback_text = "I understand. Let me process that for you."
+						
+						try:
+							fallback_audio = audio.synthesize_speech_from_text(fallback_text)
+							call_manager.send_audio_to_output(fallback_audio)
+						except Exception as e:
+							logging.error(f"Failed to synthesize fallback speech: {e}")
+							
+				except Exception as e:
+					logging.error(f"Error communicating with Agent-S: {e}")
+					
+		except audio.FishAudioError as e:
+			logging.error(f"Failed to transcribe audio: {e}")
+			# Audio might be too short or corrupted, skip processing
+		except Exception as e:
+			logging.error(f"Unexpected error during transcription: {e}")
+			
 	except Exception as e:
-		logging.error(f"Error handling audio stream: {e}")
+		logging.error(f"Error handling user utterance: {e}")
+
+
+@sio.on('playback_interrupted')
+def on_playback_interrupted(data):
+	"""Handle notification that playback was interrupted by user speech."""
+	logging.info("Playback interrupted by user speech")
 
 
 @sio.on('recording_started')
