@@ -96,17 +96,42 @@ ASI_ONE_AGENT_HANDLE = (
     or "@computer-use-action-analysis"
 )
 ASI_ONE_API_KEY = os.getenv("ASI_ONE_API_KEY", "").strip()
+USE_FETCH_AI = False
 try:
     ASI_ONE_TIMEOUT = float(os.getenv("ASI_ONE_TIMEOUT", "4.0"))
 except ValueError:
     ASI_ONE_TIMEOUT = 4.0
 
 
+def _resolve_chat_endpoint(base_url: str) -> str:
+    base = (base_url or "").strip()
+    if not base:
+        return ""
+    base = base.rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    return f"{base}/chat/completions"
+
+
+def _resolve_provider_api_key(provider: str) -> str:
+    provider_key = (provider or "").strip().lower()
+    env_map = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "azure": "AZURE_OPENAI_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "grok": "GROK_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+    }
+    env_var = env_map.get(provider_key)
+    return os.getenv(env_var, "").strip() if env_var else ""
+
+
 def _summarize_message(
     message: str,
     style: Literal["notification_text", "notification_voice"],
 ) -> Optional[str]:
-    if len(message) <= 50 or not ASI_ONE_API_KEY:
+    if len(message) <= 50 or not ASI_ONE_API_KEY or not ASI_ONE_ENDPOINT:
         return None
 
     style_normalized = style.lower()
@@ -670,11 +695,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=os.getenv("ASI_ONE_API_KEY", ""),
         help="API key for ASI:One summaries (defaults to $ASI_ONE_API_KEY).",
     )
+    parser.add_argument(
+        "--use_fetch_ai",
+        action="store_true",
+        default=False,
+        help=(
+            "Use the Fetch.ai (ASI:One) service for notification summaries "
+            "instead of the main model provider."
+        ),
+    )
     return parser
 
 
 def configure_agent(args: argparse.Namespace) -> None:
-    global AGENT, GROUNDING_AGENT, LOCAL_ENV, SCALED_DIMENSIONS, ASI_ONE_API_KEY
+    global AGENT, GROUNDING_AGENT, LOCAL_ENV, SCALED_DIMENSIONS
+    global ASI_ONE_API_KEY, ASI_ONE_ENDPOINT, ASI_ONE_MODEL, USE_FETCH_AI
 
     screen_width, screen_height = pyautogui.size()
     SCALED_DIMENSIONS = scale_screen_dimensions(
@@ -727,6 +762,32 @@ def configure_agent(args: argparse.Namespace) -> None:
 
     if getattr(args, "asi_one_api_key", None):
         ASI_ONE_API_KEY = args.asi_one_api_key.strip()
+
+    USE_FETCH_AI = bool(getattr(args, "use_fetch_ai", False))
+
+    if not USE_FETCH_AI:
+        resolved_endpoint = _resolve_chat_endpoint(args.model_url)
+        ASI_ONE_ENDPOINT = resolved_endpoint
+        if not resolved_endpoint:
+            LOGGER.warning(
+                "Notification summaries configured to use the main model but "
+                "the model_url is empty; summaries will be disabled."
+            )
+
+        ASI_ONE_MODEL = args.model or ASI_ONE_MODEL
+
+        summary_api_key = (args.model_api_key or "").strip()
+        if not summary_api_key:
+            summary_api_key = _resolve_provider_api_key(args.provider)
+
+        if summary_api_key:
+            ASI_ONE_API_KEY = summary_api_key
+        else:
+            LOGGER.warning(
+                "Notification summaries configured to use the main model but "
+                "no model_api_key was provided; summaries will be disabled."
+            )
+            ASI_ONE_API_KEY = ""
 
 
 def main() -> None:
