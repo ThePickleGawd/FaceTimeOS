@@ -31,7 +31,7 @@ CHUNK_SIZE = 1024
 # Voice Activity Detection (VAD) configuration
 # Energy is normalized RMS (0.0 to 1.0 scale after dividing by 32768)
 # Typical values: silence < 0.005, speech 0.01-0.05, loud 0.05+
-VAD_ENERGY_THRESHOLD = 0.001  # Energy threshold for voice detection (normalized scale)
+VAD_ENERGY_THRESHOLD = 0.01  # Energy threshold for voice detection (normalized scale)
 VAD_MIN_SPEECH_DURATION = 0.3  # Minimum speech duration in seconds
 VAD_MAX_SILENCE_DURATION = 1.5  # Maximum silence before ending utterance
 VAD_BUFFER_DURATION = 0.1  # Pre-buffer duration to capture speech onset

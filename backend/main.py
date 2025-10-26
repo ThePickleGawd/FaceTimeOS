@@ -27,13 +27,16 @@ import audio
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
+
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     return default if raw is None else raw.lower() in {"1", "true", "yes", "on"}
 
 
 LOG_LEVEL = os.getenv("BACKEND_LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
 
 app = Flask(__name__)
 
@@ -68,24 +71,24 @@ def _pcm_to_wav_bytes(pcm_data: bytes) -> bytes:
 
 class CallManager:
     """Manages WebSocket connection and audio output to call.py service."""
-    
+
     def __init__(self):
         self.connected = False
         self.call_active = False
         self.playback_in_progress = False
-        
+
     def connect_to_call_service(self):
         """Establish WebSocket connection to call.py service."""
         if not self.connected:
             try:
                 logging.info(f"Connecting to call service at {CALL_SERVICE_URL}")
-                sio.connect(CALL_SERVICE_URL, namespaces=['/'])
+                sio.connect(CALL_SERVICE_URL, namespaces=["/"])
                 self.connected = True
                 logging.info("Connected to call service successfully")
             except Exception as e:
                 logging.error(f"Failed to connect to call service: {e}")
                 raise
-    
+
     def disconnect_from_call_service(self):
         """Disconnect from call.py service."""
         if self.connected:
@@ -96,45 +99,45 @@ class CallManager:
                 logging.info("Disconnected from call service")
             except Exception as e:
                 logging.error(f"Error disconnecting from call service: {e}")
-    
+
     def start_call(self):
         """Start a FaceTime call session."""
         if not self.connected:
             self.connect_to_call_service()
-        
+
         if self.connected:
             # Start recording from the virtual audio device
-            sio.emit('start_recording')
+            sio.emit("start_recording")
             self.call_active = True
             logging.info("Call started, recording initiated")
             return True
         return False
-    
+
     def end_call(self):
         """End the FaceTime call session."""
         if self.connected and self.call_active:
             # Stop recording
-            sio.emit('stop_recording')
+            sio.emit("stop_recording")
             self.call_active = False
             logging.info("Call ended, recording stopped")
             # Keep connection alive for potential future calls
             return True
         return False
-    
+
     def send_audio_to_output(self, audio_bytes: bytes):
         """Send audio to be played through the FaceTime output device."""
         if not self.connected:
             logging.error("Not connected to call service, cannot send audio")
             return False
-            
+
         if not self.call_active:
             logging.warning("No active call, cannot send audio")
             return False
-            
+
         try:
             # Encode audio as base64 for transmission
-            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-            sio.emit('audio_input', {'audio': audio_b64})
+            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+            sio.emit("audio_input", {"audio": audio_b64})
             self.playback_in_progress = True
             logging.debug(f"Sent {len(audio_bytes)} bytes of audio to FaceTime output")
             return True
@@ -148,13 +151,13 @@ call_manager = CallManager()
 
 
 # Socket.IO event handlers
-@sio.on('connect')
+@sio.on("connect")
 def on_connect():
     logging.info("Connected to call service via WebSocket")
     call_manager.connected = True
 
 
-@sio.on('disconnect')
+@sio.on("disconnect")
 def on_disconnect():
     logging.info("Disconnected from call service")
     call_manager.connected = False
@@ -165,61 +168,71 @@ def on_disconnect():
 current_utterance_chunks = []
 utterance_start_time = None
 
-@sio.on('utterance_start')
+
+@sio.on("utterance_start")
 def on_utterance_start(data):
     """Handle start of user utterance."""
     global current_utterance_chunks, utterance_start_time
     current_utterance_chunks = []
-    utterance_start_time = data.get('timestamp', time.time())
+    utterance_start_time = data.get("timestamp", time.time())
     logging.info("🎤 UTTERANCE START - Beginning audio stream from call.py")
 
-@sio.on('audio_chunk')
+
+@sio.on("audio_chunk")
 def on_audio_chunk(data):
     """Handle incoming audio chunk during utterance."""
     global current_utterance_chunks
     try:
-        audio_b64 = data.get('audio')
+        audio_b64 = data.get("audio")
         if not audio_b64:
             return
-        
+
         # Decode and store chunk
         audio_bytes = base64.b64decode(audio_b64)
         current_utterance_chunks.append(audio_bytes)
         # Log first few chunks, then every 10th chunk to avoid spam
-        if len(current_utterance_chunks) <= 5 or len(current_utterance_chunks) % 10 == 0:
-            logging.info(f"📦 Audio chunk #{len(current_utterance_chunks)}: {len(audio_bytes)} bytes")
+        if (
+            len(current_utterance_chunks) <= 5
+            or len(current_utterance_chunks) % 10 == 0
+        ):
+            logging.info(
+                f"📦 Audio chunk #{len(current_utterance_chunks)}: {len(audio_bytes)} bytes"
+            )
     except Exception as e:
         logging.error(f"Error processing audio chunk: {e}")
 
-@sio.on('utterance_end')
+
+@sio.on("utterance_end")
 def on_utterance_end(data):
     """Handle end of user utterance - process complete audio."""
     global current_utterance_chunks, utterance_start_time
     try:
-        duration = data.get('duration', 0)
-        total_chunks = data.get('total_chunks', len(current_utterance_chunks))
-        
+        duration = data.get("duration", 0)
+        total_chunks = data.get("total_chunks", len(current_utterance_chunks))
+
         if not current_utterance_chunks:
             logging.warning("No audio chunks received for utterance")
             return
-        
+
         # Combine all chunks into single audio buffer (raw PCM)
-        pcm_bytes = b''.join(current_utterance_chunks)
-        logging.info(f"🏁 UTTERANCE END - Received {len(pcm_bytes)} bytes of PCM from {len(current_utterance_chunks)} chunks, {duration:.2f}s duration")
+        pcm_bytes = b"".join(current_utterance_chunks)
+        logging.info(
+            f"🏁 UTTERANCE END - Received {len(pcm_bytes)} bytes of PCM from {len(current_utterance_chunks)} chunks, {duration:.2f}s duration"
+        )
 
         # Convert to WAV container for downstream services
         wav_bytes = _pcm_to_wav_bytes(pcm_bytes)
         logging.info(f"🎧 Converted PCM to WAV ({len(wav_bytes)} bytes)")
-        
+
         # Clear buffer
         current_utterance_chunks = []
         utterance_start_time = None
-        
+
         # Transcribe the complete utterance
         try:
             transcript = audio.transcribe_audio_bytes(wav_bytes)
             logging.info(f"User said: {transcript}")
-            
+
             if transcript.strip():
                 # Forward transcript to Agent-S for processing
                 agent_payload = {
@@ -229,78 +242,88 @@ def on_utterance_end(data):
                         "call_active": call_manager.call_active,
                         "audio_length_bytes": len(wav_bytes),
                         "duration_seconds": duration,
-                        "audio_format": "wav"
-                    }
+                        "audio_format": "wav",
+                    },
                 }
-                
+
                 # Send to Agent-S and get response
                 try:
                     response = _safe_post(agent_s_client, "/api/chat", agent_payload)
-                    
+
                     if response and response.status_code == 200:
                         result = response.json()
                         response_text = result.get("response", "")
-                        
+
                         if response_text:
                             logging.info(f"Agent-S response: {response_text[:100]}...")
-                            
+
                             # Convert response to speech and send back through call
                             try:
-                                response_audio = audio.synthesize_speech_from_text(response_text)
+                                response_audio = audio.synthesize_speech_from_text(
+                                    response_text
+                                )
                                 call_manager.send_audio_to_output(response_audio)
-                                logging.info(f"Sent {len(response_audio)} bytes of synthesized audio to FaceTime")
+                                logging.info(
+                                    f"Sent {len(response_audio)} bytes of synthesized audio to FaceTime"
+                                )
                             except Exception as e:
                                 logging.error(f"Failed to synthesize speech: {e}")
                     else:
                         # Fallback response if Agent-S is unavailable
                         logging.warning("Agent-S unavailable, using fallback response")
                         fallback_text = "I understand. Let me process that for you."
-                        
+
                         try:
-                            fallback_audio = audio.synthesize_speech_from_text(fallback_text)
+                            fallback_audio = audio.synthesize_speech_from_text(
+                                fallback_text
+                            )
                             call_manager.send_audio_to_output(fallback_audio)
                         except Exception as e:
                             logging.error(f"Failed to synthesize fallback speech: {e}")
-                            
+
                 except Exception as e:
                     logging.error(f"Error communicating with Agent-S: {e}")
-                    
+
         except audio.FishAudioError as e:
             logging.error(f"Failed to transcribe audio: {e}")
             # Audio might be too short or corrupted, skip processing
         except Exception as e:
             logging.error(f"Unexpected error during transcription: {e}")
-            
+
     except Exception as e:
         logging.error(f"Error handling utterance end: {e}", exc_info=True)
 
-@sio.on('utterance_cancelled')
+
+@sio.on("utterance_cancelled")
 def on_utterance_cancelled(data):
     """Handle cancelled utterance (e.g., too short)."""
     global current_utterance_chunks, utterance_start_time
-    reason = data.get('reason', 'unknown')
-    duration = data.get('duration', 0)
-    logging.info(f"❌ UTTERANCE CANCELLED - Reason: {reason}, Duration: {duration:.2f}s")
+    reason = data.get("reason", "unknown")
+    duration = data.get("duration", 0)
+    logging.info(
+        f"❌ UTTERANCE CANCELLED - Reason: {reason}, Duration: {duration:.2f}s"
+    )
     current_utterance_chunks = []
     utterance_start_time = None
 
-@sio.on('playback_interrupted')
+
+@sio.on("playback_interrupted")
 def on_playback_interrupted(data):
     """Handle notification that playback was interrupted by user speech."""
     logging.info("Playback interrupted by user speech")
 
 
-@sio.on('recording_started')
+@sio.on("recording_started")
 def on_recording_started(data):
     logging.info("Recording started confirmation received")
 
 
-@sio.on('recording_stopped')
+@sio.on("recording_stopped")
 def on_recording_stopped(data):
     logging.info("Recording stopped confirmation received")
 
 
-@sio.on('error')
+@sio.on("error")
 def on_error(data):
     logging.error(f"Error from call service: {data}")
 
@@ -352,7 +375,9 @@ IMESSAGE_BRIDGE_BASE_URL = os.getenv(
 
 agent_s_client = RemoteClient(base_url=AGENT_S_BASE_URL, timeout=HTTP_TIMEOUT)
 ui_client = RemoteClient(base_url=UI_SERVER_BASE_URL, timeout=HTTP_TIMEOUT)
-imessage_bridge_client = RemoteClient(base_url=IMESSAGE_BRIDGE_BASE_URL, timeout=HTTP_TIMEOUT)
+imessage_bridge_client = RemoteClient(
+    base_url=IMESSAGE_BRIDGE_BASE_URL, timeout=HTTP_TIMEOUT
+)
 
 
 class ScreenshotError(RuntimeError):
@@ -389,16 +414,24 @@ def _forward_response(remote_response: Optional[requests.Response]):
         try:
             body = remote_response.json()
         except ValueError:
-            logging.warning("Expected JSON but got invalid payload from %s", remote_response.url)
+            logging.warning(
+                "Expected JSON but got invalid payload from %s", remote_response.url
+            )
             body = {"raw": remote_response.text}
         return jsonify(body), remote_response.status_code
 
-    return remote_response.text, remote_response.status_code, {
-        "Content-Type": content_type or "text/plain",
-    }
+    return (
+        remote_response.text,
+        remote_response.status_code,
+        {
+            "Content-Type": content_type or "text/plain",
+        },
+    )
 
 
-def _safe_post(client: RemoteClient, path: str, payload: Dict[str, Any]) -> Optional[requests.Response]:
+def _safe_post(
+    client: RemoteClient, path: str, payload: Dict[str, Any]
+) -> Optional[requests.Response]:
     try:
         return client.post_json(path, payload)
     except requests.RequestException as exc:
@@ -421,8 +454,14 @@ def _synthesize_speech_payload(
     audio_format: Optional[str] = None,
 ) -> Tuple[bytes, str]:
     """Synthesize speech and return audio bytes with best-effort content type."""
-    normalized_voice = voice.strip() if isinstance(voice, str) and voice.strip() else None
-    normalized_format = audio_format.strip() if isinstance(audio_format, str) and audio_format.strip() else None
+    normalized_voice = (
+        voice.strip() if isinstance(voice, str) and voice.strip() else None
+    )
+    normalized_format = (
+        audio_format.strip()
+        if isinstance(audio_format, str) and audio_format.strip()
+        else None
+    )
 
     audio_bytes = audio.synthesize_speech_from_text(
         str(text),
@@ -431,7 +470,9 @@ def _synthesize_speech_payload(
     )
 
     content_type_key = normalized_format.lower() if normalized_format else ""
-    content_type = audio.AUDIO_FORMAT_CONTENT_TYPES.get(content_type_key, audio.DEFAULT_AUDIO_CONTENT_TYPE)
+    content_type = audio.AUDIO_FORMAT_CONTENT_TYPES.get(
+        content_type_key, audio.DEFAULT_AUDIO_CONTENT_TYPE
+    )
     return audio_bytes, content_type
 
 
@@ -449,7 +490,9 @@ def _play_audio_bytes(
     try:
         import sounddevice as sd  # type: ignore
         import soundfile as sf  # type: ignore
-    except Exception as exc:  # pragma: no cover - defensive: runtime environment specific
+    except (
+        Exception
+    ) as exc:  # pragma: no cover - defensive: runtime environment specific
         logging.error("Audio playback libraries unavailable: %s", exc)
         return
 
@@ -475,7 +518,10 @@ def _play_audio_bytes(
                     device_index = idx
                     break
             if device_index is None:
-                logging.warning("Requested audio output device '%s' not found, using system default", device_name)
+                logging.warning(
+                    "Requested audio output device '%s' not found, using system default",
+                    device_name,
+                )
 
     data: Optional[Any] = None
     sample_rate: Optional[int] = None
@@ -492,7 +538,7 @@ def _play_audio_bytes(
 
         try:
             from pydub import AudioSegment
-            import numpy as np 
+            import numpy as np
         except Exception as inner_exc:  # pragma: no cover - defensive
             logging.error("MP3 playback fallback unavailable: %s", inner_exc)
             return
@@ -552,7 +598,7 @@ def complete_task():
     attachment_path = temp_dir / f"agent_s_task_{uuid4().hex}.png"
     try:
         attachment_path.write_bytes(base64.b64decode(screenshot_b64))
-    except (ValueError, OSError) as exc: 
+    except (ValueError, OSError) as exc:
         return jsonify({"error": f"Unable to prepare screenshot: {exc}"}), 500
 
     try:
@@ -561,7 +607,9 @@ def complete_task():
             "text": message_text,
             "attachments": [str(attachment_path)],
         }
-        response = _safe_post(imessage_bridge_client, "/api/send_imessage", forward_payload)
+        response = _safe_post(
+            imessage_bridge_client, "/api/send_imessage", forward_payload
+        )
         if response is None:
             return jsonify({"status": "failed", "bridge_forwarded": False}), 502
         return _forward_response(response)
@@ -580,15 +628,17 @@ def current_action():
             # Stop the agent
             _proxy_command("/api/stop")
             break
-            
+
     text = str(payload.get("voice_summary", "") or "").strip()
-    
+
     voice = "e58b0d7efca34eb38d5c4985e378abcb"  # fish.audio uses its built-in default voice when reference_id is unset
     audio_format = "mp3"  # fish.audio TTSRequest default format
 
     if text:
         try:
-            audio_bytes, _ = _synthesize_speech_payload(text, voice=voice, audio_format=audio_format)
+            audio_bytes, _ = _synthesize_speech_payload(
+                text, voice=voice, audio_format=audio_format
+            )
             _play_audio_bytes(audio_bytes, audio_format=audio_format)
         except (audio.FishAudioError, ValueError) as exc:
             logging.error("Failed to synthesize voice notification: %s", exc)
@@ -635,8 +685,11 @@ def send_imessage_endpoint() -> Any:
         file_list = []
         for item in attachments:
             if not isinstance(item, str) or not item.strip():
-                return jsonify({"error": "attachments must contain non-empty paths"}), 400
-            file_list.append(str(Path(item.strip().strip('"\'')).expanduser()))
+                return (
+                    jsonify({"error": "attachments must contain non-empty paths"}),
+                    400,
+                )
+            file_list.append(str(Path(item.strip().strip("\"'")).expanduser()))
 
     if text is not None and not text.strip():
         text = None
@@ -722,10 +775,13 @@ def transcribe() -> Response:
     """Transcribe raw audio bytes sent in the request body via fish.audio ASR."""
     audio_bytes = request.get_data(cache=False)
     if not audio_bytes:
-        return jsonify({"error": "Request body must contain audio bytes"}), HTTPStatus.BAD_REQUEST
+        return (
+            jsonify({"error": "Request body must contain audio bytes"}),
+            HTTPStatus.BAD_REQUEST,
+        )
 
     language = request.args.get("language")
-    
+
     try:
         transcript = audio.transcribe_audio_bytes(audio_bytes, language=language)
         return jsonify({"text": transcript}), HTTPStatus.OK
@@ -741,15 +797,20 @@ def synthesize() -> Response:
     """Synthesize speech for the provided text via fish.audio TTS."""
     payload = request.get_json(silent=True) or {}
     text = payload.get("text")
-    
+
     if not text:
-        return jsonify({"error": "JSON body with 'text' field is required"}), HTTPStatus.BAD_REQUEST
+        return (
+            jsonify({"error": "JSON body with 'text' field is required"}),
+            HTTPStatus.BAD_REQUEST,
+        )
 
     voice = payload.get("voice")
     audio_format = payload.get("audio_format")
 
     try:
-        audio_bytes, content_type = _synthesize_speech_payload(text, voice=voice, audio_format=audio_format)
+        audio_bytes, content_type = _synthesize_speech_payload(
+            text, voice=voice, audio_format=audio_format
+        )
         return Response(io.BytesIO(audio_bytes).getvalue(), mimetype=content_type)
     except audio.FishAudioError as exc:
         logging.error("fish.audio error: %s", exc)
@@ -763,38 +824,46 @@ def call_started() -> Response:
     """Handle notification from Agent-S that a FaceTime call has been initiated."""
     payload = request.get_json(silent=True) or {}
     logging.info(f"Received call_started notification from Agent-S: {payload}")
-    
+
     # Extract call metadata if provided
     number = payload.get("number")
-    
+
     try:
-        
+
         # Start the call session with the call.py service
-        # success = call_manager.start_call()
-        success = True
-        
+        success = call_manager.start_call()
+
         if success:
-            
-            return jsonify({
-                "status": "success",
-                "message": "Call session started",
-                "call_active": True,
-                "connected_to_call_service": call_manager.connected
-            }), HTTPStatus.OK
+
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": "Call session started",
+                        "call_active": True,
+                        "connected_to_call_service": call_manager.connected,
+                    }
+                ),
+                HTTPStatus.OK,
+            )
         else:
-            return jsonify({
-                "status": "error",
-                "message": "Failed to start call session",
-                "call_active": False
-            }), HTTPStatus.INTERNAL_SERVER_ERROR
-            
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "Failed to start call session",
+                        "call_active": False,
+                    }
+                ),
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+
     except Exception as e:
         logging.error(f"Error starting call session: {e}")
-        return jsonify({
-            "status": "error",
-            "message": str(e),
-            "call_active": False
-        }), HTTPStatus.INTERNAL_SERVER_ERROR
+        return (
+            jsonify({"status": "error", "message": str(e), "call_active": False}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
 
 
 @app.route("/api/call_ended", methods=["POST"])
@@ -802,40 +871,55 @@ def call_ended() -> Response:
     """Handle notification that the FaceTime call has ended."""
     payload = request.get_json(silent=True) or {}
     logging.info(f"Received call_ended notification: {payload}")
-    
+
     try:
         # End the call session
         success = call_manager.end_call()
-        
+
         if success:
-            return jsonify({
-                "status": "success",
-                "message": "Call session ended",
-                "call_active": False
-            }), HTTPStatus.OK
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": "Call session ended",
+                        "call_active": False,
+                    }
+                ),
+                HTTPStatus.OK,
+            )
         else:
-            return jsonify({
-                "status": "info",
-                "message": "No active call to end",
-                "call_active": False
-            }), HTTPStatus.OK
-            
+            return (
+                jsonify(
+                    {
+                        "status": "info",
+                        "message": "No active call to end",
+                        "call_active": False,
+                    }
+                ),
+                HTTPStatus.OK,
+            )
+
     except Exception as e:
         logging.error(f"Error ending call session: {e}")
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), HTTPStatus.INTERNAL_SERVER_ERROR
+        return (
+            jsonify({"status": "error", "message": str(e)}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
 
 
 @app.route("/api/call_status", methods=["GET"])
 def call_status() -> Response:
     """Get the current status of the call session."""
-    return jsonify({
-        "connected_to_service": call_manager.connected,
-        "call_active": call_manager.call_active,
-        "service_url": CALL_SERVICE_URL
-    }), HTTPStatus.OK
+    return (
+        jsonify(
+            {
+                "connected_to_service": call_manager.connected,
+                "call_active": call_manager.call_active,
+                "service_url": CALL_SERVICE_URL,
+            }
+        ),
+        HTTPStatus.OK,
+    )
 
 
 @app.route("/api/send_audio_to_call", methods=["POST"])
@@ -843,7 +927,7 @@ def send_audio_to_call() -> Response:
     """Send audio to be played through the call output."""
     # Get raw audio bytes from request body
     audio_bytes = request.get_data(cache=False)
-    
+
     if not audio_bytes:
         # Try to get from JSON payload with base64 encoding
         payload = request.get_json(silent=True) or {}
@@ -852,28 +936,31 @@ def send_audio_to_call() -> Response:
             try:
                 audio_bytes = base64.b64decode(audio_b64)
             except Exception as e:
-                return jsonify({"error": f"Invalid base64 audio data: {e}"}), HTTPStatus.BAD_REQUEST
+                return (
+                    jsonify({"error": f"Invalid base64 audio data: {e}"}),
+                    HTTPStatus.BAD_REQUEST,
+                )
         else:
             return jsonify({"error": "No audio data provided"}), HTTPStatus.BAD_REQUEST
-    
+
     if not call_manager.call_active:
-        return jsonify({
-            "status": "error",
-            "message": "No active call session"
-        }), HTTPStatus.BAD_REQUEST
-    
+        return (
+            jsonify({"status": "error", "message": "No active call session"}),
+            HTTPStatus.BAD_REQUEST,
+        )
+
     try:
         call_manager.send_audio_to_output(audio_bytes)
-        return jsonify({
-            "status": "success",
-            "bytes_sent": len(audio_bytes)
-        }), HTTPStatus.OK
+        return (
+            jsonify({"status": "success", "bytes_sent": len(audio_bytes)}),
+            HTTPStatus.OK,
+        )
     except Exception as e:
         logging.error(f"Error sending audio to call: {e}")
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), HTTPStatus.INTERNAL_SERVER_ERROR
+        return (
+            jsonify({"status": "error", "message": str(e)}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
 
 
 if __name__ == "__main__":
