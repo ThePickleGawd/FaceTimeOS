@@ -1,9 +1,11 @@
+import os
 import re
 from collections import defaultdict
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytesseract
+import requests
 from PIL import Image
 from pytesseract import Output
 
@@ -414,23 +416,35 @@ class OSWorldACI(ACI):
         """Initiate a FaceTime call to the provided phone number or address."""
         assert self.platform == "darwin", "FaceTime calls are only supported on macOS."
         uri = f"facetime://{number.strip()}"
-        call_button_coords = self.generate_coords("FaceTime call button", self.obs)
 
-        call_x, call_y = (
-            93,
-            928,
-        )  # Hardcoded coordinates for FaceTime call button (full screen mode)
-        call_x_2, call_y_2 = (
-            123,
-            928,
-        )  # Calvin's facetime button location
+        # Notify the server that a call has started
+        server_host = os.getenv("SERVER_HOST", "127.0.0.1").strip() or "127.0.0.1"
+        if server_host == "0.0.0.0":
+            server_host = "127.0.0.1"
+        server_port = os.getenv("SERVER_PORT", "8003").strip() or "8003"
+        payload = {"number": str(number).strip()}
+        try:
+            requests.post(
+                f"http://{server_host}:{server_port}/api/call_started",
+                json=payload,
+                timeout=2,
+            ).raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("Failed to notify /api/call_started: %s", exc)
+
+        # Return pyautogui code to start the FaceTime call and share screen
         return (
             "import subprocess, time, pyautogui; "
             f"subprocess.run(['open', {repr(uri)}], check=True); "
             "time.sleep(2.0); "
-            f"pyautogui.click({call_x}, {call_y}, button='left'); "
-            "time.sleep(1.0); "
-            f"pyautogui.click({call_x_2}, {call_y_2}, button='left')"
+            "pyautogui.click(93, 928, button='left'); "  # Click the call button
+            "pyautogui.click(123, 928, button='left'); "  # Click Calvin's button
+            "time.sleep(10.0); "  # Wait for entering call
+            "pyautogui.click(254, 923, button='left'); "  # Click share screen
+            "time.sleep(0.5); "
+            "pyautogui.click(254, 935, button='left'); "  # Click share "my" screen
+            "time.sleep(1); "
+            "pyautogui.click(1407, 27, button='left')"  # Click confirm share whole screen
         )
 
     @agent_action

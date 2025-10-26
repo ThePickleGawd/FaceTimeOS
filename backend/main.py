@@ -17,6 +17,7 @@ from uuid import uuid4
 import requests
 from flask import Flask, Response, jsonify, request
 from dotenv import load_dotenv
+import socketio
 
 import audio
 
@@ -33,6 +34,204 @@ LOG_LEVEL = os.getenv("BACKEND_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = Flask(__name__)
+
+# Socket.IO client for connecting to call.py service
+sio = socketio.Client(logger=True, engineio_logger=False)
+
+# Call service configuration
+CALL_SERVICE_HOST = os.getenv("CALL_SERVICE_HOST", "localhost")
+CALL_SERVICE_PORT = os.getenv("CALL_SERVICE_PORT", "5002")
+CALL_SERVICE_URL = f"http://{CALL_SERVICE_HOST}:{CALL_SERVICE_PORT}"
+
+
+class CallManager:
+	"""Manages WebSocket connection and audio output to call.py service."""
+	
+	def __init__(self):
+		self.connected = False
+		self.call_active = False
+		self.playback_in_progress = False
+		
+	def connect_to_call_service(self):
+		"""Establish WebSocket connection to call.py service."""
+		if not self.connected:
+			try:
+				logging.info(f"Connecting to call service at {CALL_SERVICE_URL}")
+				sio.connect(CALL_SERVICE_URL, namespaces=['/'])
+				self.connected = True
+				logging.info("Connected to call service successfully")
+			except Exception as e:
+				logging.error(f"Failed to connect to call service: {e}")
+				raise
+	
+	def disconnect_from_call_service(self):
+		"""Disconnect from call.py service."""
+		if self.connected:
+			try:
+				sio.disconnect()
+				self.connected = False
+				self.call_active = False
+				logging.info("Disconnected from call service")
+			except Exception as e:
+				logging.error(f"Error disconnecting from call service: {e}")
+	
+	def start_call(self):
+		"""Start a FaceTime call session."""
+		if not self.connected:
+			self.connect_to_call_service()
+		
+		if self.connected:
+			# Start recording from the virtual audio device
+			sio.emit('start_recording')
+			self.call_active = True
+			logging.info("Call started, recording initiated")
+			return True
+		return False
+	
+	def end_call(self):
+		"""End the FaceTime call session."""
+		if self.connected and self.call_active:
+			# Stop recording
+			sio.emit('stop_recording')
+			self.call_active = False
+			logging.info("Call ended, recording stopped")
+			# Keep connection alive for potential future calls
+			return True
+		return False
+	
+	def send_audio_to_output(self, audio_bytes: bytes):
+		"""Send audio to be played through the FaceTime output device."""
+		if not self.connected:
+			logging.error("Not connected to call service, cannot send audio")
+			return False
+			
+		if not self.call_active:
+			logging.warning("No active call, cannot send audio")
+			return False
+			
+		try:
+			# Encode audio as base64 for transmission
+			audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+			sio.emit('audio_input', {'audio': audio_b64})
+			self.playback_in_progress = True
+			logging.debug(f"Sent {len(audio_bytes)} bytes of audio to FaceTime output")
+			return True
+		except Exception as e:
+			logging.error(f"Failed to send audio: {e}")
+			return False
+
+
+# Initialize call manager
+call_manager = CallManager()
+
+
+# Socket.IO event handlers
+@sio.on('connect')
+def on_connect():
+	logging.info("Connected to call service via WebSocket")
+	call_manager.connected = True
+
+
+@sio.on('disconnect')
+def on_disconnect():
+	logging.info("Disconnected from call service")
+	call_manager.connected = False
+	call_manager.call_active = False
+
+
+@sio.on('user_utterance')
+def on_user_utterance(data):
+	"""Handle complete user utterance from call.py with VAD."""
+	try:
+		# Decode base64 audio
+		audio_b64 = data.get('audio')
+		duration = data.get('duration', 0)
+		
+		if not audio_b64:
+			logging.warning("No audio data in utterance")
+			return
+			
+		audio_bytes = base64.b64decode(audio_b64)
+		logging.info(f"Received user utterance: {len(audio_bytes)} bytes, {duration:.2f}s duration")
+		
+		# Transcribe the complete utterance
+		try:
+			transcript = audio.transcribe_audio_bytes(audio_bytes)
+			logging.info(f"User said: {transcript}")
+			
+			if transcript.strip():
+				# Forward transcript to Agent-S for processing
+				agent_payload = {
+					"prompt": transcript,
+					"metadata": {
+						"source": "facetime_call",
+						"call_active": call_manager.call_active,
+						"audio_length_bytes": len(audio_bytes),
+						"duration_seconds": duration
+					}
+				}
+				
+				# Send to Agent-S and get response
+				try:
+					response = _safe_post(agent_s_client, "/api/chat", agent_payload)
+					
+					if response and response.status_code == 200:
+						result = response.json()
+						response_text = result.get("response", "")
+						
+						if response_text:
+							logging.info(f"Agent-S response: {response_text[:100]}...")
+							
+							# Convert response to speech and send back through call
+							try:
+								response_audio = audio.synthesize_speech_from_text(response_text)
+								call_manager.send_audio_to_output(response_audio)
+								logging.info(f"Sent {len(response_audio)} bytes of synthesized audio to FaceTime")
+							except Exception as e:
+								logging.error(f"Failed to synthesize speech: {e}")
+					else:
+						# Fallback response if Agent-S is unavailable
+						logging.warning("Agent-S unavailable, using fallback response")
+						fallback_text = "I understand. Let me process that for you."
+						
+						try:
+							fallback_audio = audio.synthesize_speech_from_text(fallback_text)
+							call_manager.send_audio_to_output(fallback_audio)
+						except Exception as e:
+							logging.error(f"Failed to synthesize fallback speech: {e}")
+							
+				except Exception as e:
+					logging.error(f"Error communicating with Agent-S: {e}")
+					
+		except audio.FishAudioError as e:
+			logging.error(f"Failed to transcribe audio: {e}")
+			# Audio might be too short or corrupted, skip processing
+		except Exception as e:
+			logging.error(f"Unexpected error during transcription: {e}")
+			
+	except Exception as e:
+		logging.error(f"Error handling user utterance: {e}")
+
+
+@sio.on('playback_interrupted')
+def on_playback_interrupted(data):
+	"""Handle notification that playback was interrupted by user speech."""
+	logging.info("Playback interrupted by user speech")
+
+
+@sio.on('recording_started')
+def on_recording_started(data):
+	logging.info("Recording started confirmation received")
+
+
+@sio.on('recording_stopped')
+def on_recording_stopped(data):
+	logging.info("Recording stopped confirmation received")
+
+
+@sio.on('error')
+def on_error(data):
+	logging.error(f"Error from call service: {data}")
 
 
 @dataclass
@@ -366,6 +565,122 @@ def synthesize() -> Response:
 		return jsonify({"error": str(exc)}), HTTPStatus.BAD_GATEWAY
 	except ValueError as exc:
 		return jsonify({"error": str(exc)}), HTTPStatus.BAD_REQUEST
+
+
+@app.route("/api/call_started", methods=["POST"])
+def call_started() -> Response:
+	"""Handle notification from Agent-S that a FaceTime call has been initiated."""
+	payload = request.get_json(silent=True) or {}
+	logging.info(f"Received call_started notification from Agent-S: {payload}")
+	
+	# Extract call metadata if provided
+	number = payload.get("number")
+	
+	try:
+		# Start the call session with the call.py service
+		success = call_manager.start_call()
+		
+		if success:
+			
+			return jsonify({
+				"status": "success",
+				"message": "Call session started",
+				"call_active": True,
+				"connected_to_call_service": call_manager.connected
+			}), HTTPStatus.OK
+		else:
+			return jsonify({
+				"status": "error",
+				"message": "Failed to start call session",
+				"call_active": False
+			}), HTTPStatus.INTERNAL_SERVER_ERROR
+			
+	except Exception as e:
+		logging.error(f"Error starting call session: {e}")
+		return jsonify({
+			"status": "error",
+			"message": str(e),
+			"call_active": False
+		}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+
+@app.route("/api/call_ended", methods=["POST"])
+def call_ended() -> Response:
+	"""Handle notification that the FaceTime call has ended."""
+	payload = request.get_json(silent=True) or {}
+	logging.info(f"Received call_ended notification: {payload}")
+	
+	try:
+		# End the call session
+		success = call_manager.end_call()
+		
+		if success:
+			return jsonify({
+				"status": "success",
+				"message": "Call session ended",
+				"call_active": False
+			}), HTTPStatus.OK
+		else:
+			return jsonify({
+				"status": "info",
+				"message": "No active call to end",
+				"call_active": False
+			}), HTTPStatus.OK
+			
+	except Exception as e:
+		logging.error(f"Error ending call session: {e}")
+		return jsonify({
+			"status": "error",
+			"message": str(e)
+		}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+
+@app.route("/api/call_status", methods=["GET"])
+def call_status() -> Response:
+	"""Get the current status of the call session."""
+	return jsonify({
+		"connected_to_service": call_manager.connected,
+		"call_active": call_manager.call_active,
+		"service_url": CALL_SERVICE_URL
+	}), HTTPStatus.OK
+
+
+@app.route("/api/send_audio_to_call", methods=["POST"])
+def send_audio_to_call() -> Response:
+	"""Send audio to be played through the call output."""
+	# Get raw audio bytes from request body
+	audio_bytes = request.get_data(cache=False)
+	
+	if not audio_bytes:
+		# Try to get from JSON payload with base64 encoding
+		payload = request.get_json(silent=True) or {}
+		audio_b64 = payload.get("audio")
+		if audio_b64:
+			try:
+				audio_bytes = base64.b64decode(audio_b64)
+			except Exception as e:
+				return jsonify({"error": f"Invalid base64 audio data: {e}"}), HTTPStatus.BAD_REQUEST
+		else:
+			return jsonify({"error": "No audio data provided"}), HTTPStatus.BAD_REQUEST
+	
+	if not call_manager.call_active:
+		return jsonify({
+			"status": "error",
+			"message": "No active call session"
+		}), HTTPStatus.BAD_REQUEST
+	
+	try:
+		call_manager.send_audio_to_output(audio_bytes)
+		return jsonify({
+			"status": "success",
+			"bytes_sent": len(audio_bytes)
+		}), HTTPStatus.OK
+	except Exception as e:
+		logging.error(f"Error sending audio to call: {e}")
+		return jsonify({
+			"status": "error",
+			"message": str(e)
+		}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 
 if __name__ == "__main__":

@@ -35,6 +35,8 @@ dependencies = [
     'pywin32; platform_system == "Windows"',
     "uagents>=0.20.1",
     "pytest>=8.4.2",
+    "flask>=3.1.2",
+    "typing-extensions>=4.15.0",
 ]
 
 [project.optional-dependencies]
