@@ -578,4 +578,4 @@ if __name__ == "__main__":
     
     logger.info("SocketIO server initialized with max message size: 10MB")
 
-    socketio.run(app, host=host, port=port, debug=True, log_output=False)
+    socketio.run(app, host=host, port=port, debug=True, log_output=False, allow_unsafe_werkzeug=True)
