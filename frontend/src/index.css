@@ -4,15 +4,15 @@
 
 /* Liquid Glass Effect Base */
 .liquid-glass {
-  background: rgba(255, 255, 255, 0.25);
-  backdrop-filter: blur(16px) saturate(180%) brightness(120%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%) brightness(120%);
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  background: rgba(20, 20, 30, 0.85);
+  backdrop-filter: blur(16px) saturate(180%) brightness(80%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%) brightness(80%);
+  border: 2px solid rgba(255, 255, 255, 0.15);
   border-radius: 1rem;
-  box-shadow: 
-    0 8px 32px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2);
   position: relative;
   overflow: hidden;
 }
@@ -50,8 +50,8 @@
 /* Fallback for browsers without backdrop-filter support */
 @supports not (backdrop-filter: blur()) {
   .liquid-glass {
-    background: rgba(255, 255, 255, 0.5);
-    border: 2px solid rgba(255, 255, 255, 0.6);
+    background: rgba(20, 20, 30, 0.95);
+    border: 2px solid rgba(255, 255, 255, 0.2);
   }
 }
 
@@ -91,9 +91,9 @@ button, input, select, textarea, .interactive {
 
 /* Add visual feedback for draggable area */
 .draggable-area:hover {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  background: rgba(30, 35, 45, 0.9);
+  backdrop-filter: blur(16px) saturate(180%) brightness(85%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%) brightness(85%);
 }
 
 /* Dark theme liquid glass variant */
@@ -120,32 +120,201 @@ button, input, select, textarea, .interactive {
 .liquid-glass.chat-container {
   min-height: auto;
   height: auto;
-  background: rgba(190, 190, 190, 0.7);
-  backdrop-filter: blur(20px) saturate(200%) brightness(110%);
-  -webkit-backdrop-filter: blur(20px) saturate(200%) brightness(110%);
-  border: 1px solid rgba(170, 170, 170, 0.5);
+  background: rgba(20, 20, 30, 0.85);
+  backdrop-filter: blur(20px) saturate(200%) brightness(75%);
+  -webkit-backdrop-filter: blur(20px) saturate(200%) brightness(75%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   box-shadow:
-    0 12px 40px rgba(0, 0, 0, 0.15),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.05);
+    0 12px 40px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
 }
 
 /* Thin bar variant of liquid glass - for command bar */
 .liquid-glass-bar {
-  background: rgba(190, 190, 190, 0.7);
-  backdrop-filter: blur(16px) saturate(180%) brightness(120%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%) brightness(120%);
-  border: 2px solid rgba(170, 170, 170, 0.5);
+  background: rgba(20, 20, 30, 0.85);
+  backdrop-filter: blur(16px) saturate(180%) brightness(80%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%) brightness(80%);
+  border: 2px solid rgba(255, 255, 255, 0.15);
   border-radius: 1rem;
   box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2);
   position: relative;
   overflow: hidden;
   height: 32px !important;
   min-height: 32px !important;
   max-height: 32px !important;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* LED strip chase animation for the bar */
+.liquid-glass-bar.glowing {
+  border: 3px solid transparent;
+  position: relative;
+  overflow: visible;
+  animation: border-glow-fill 1.5s ease-out forwards;
+}
+
+.liquid-glass-bar.glowing::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  background: transparent;
+  box-shadow:
+    0 0 20px 10px rgba(97, 187, 70, 1),
+    0 0 40px 15px rgba(253, 184, 39, 0.8);
+  animation: led-travel 1.5s ease-out forwards, led-color-shift 1.5s ease-out forwards;
+  pointer-events: none;
+  z-index: 10;
+  opacity: 1;
+}
+
+@keyframes led-travel {
+  0% {
+    left: 0;
+    top: 0;
+  }
+  25% {
+    left: 100%;
+    top: 0;
+  }
+  50% {
+    left: 100%;
+    top: 100%;
+  }
+  75% {
+    left: 0;
+    top: 100%;
+  }
+  100% {
+    left: 0;
+    top: 0;
+  }
+}
+
+@keyframes led-color-shift {
+  0% {
+    box-shadow:
+      0 0 20px 10px rgba(97, 187, 70, 1),
+      0 0 40px 15px rgba(97, 187, 70, 0.6);
+  }
+  25% {
+    box-shadow:
+      0 0 20px 10px rgba(253, 184, 39, 1),
+      0 0 40px 15px rgba(253, 184, 39, 0.6);
+  }
+  50% {
+    box-shadow:
+      0 0 20px 10px rgba(245, 130, 31, 1),
+      0 0 40px 15px rgba(245, 130, 31, 0.6);
+  }
+  75% {
+    box-shadow:
+      0 0 20px 10px rgba(224, 58, 62, 1),
+      0 0 40px 15px rgba(224, 58, 62, 0.6);
+  }
+  100% {
+    box-shadow:
+      0 0 20px 10px rgba(150, 61, 151, 1),
+      0 0 40px 15px rgba(150, 61, 151, 0.6);
+  }
+}
+
+@keyframes border-glow-fill {
+  0% {
+    box-shadow: none;
+  }
+  25% {
+    box-shadow:
+      0 -3px 15px rgba(97, 187, 70, 0.8),
+      inset 0 3px 10px rgba(97, 187, 70, 0.3);
+  }
+  50% {
+    box-shadow:
+      0 -3px 15px rgba(97, 187, 70, 0.8),
+      3px 0 15px rgba(253, 184, 39, 0.8),
+      inset 0 3px 10px rgba(97, 187, 70, 0.3),
+      inset -3px 0 10px rgba(253, 184, 39, 0.3);
+  }
+  75% {
+    box-shadow:
+      0 -3px 15px rgba(97, 187, 70, 0.8),
+      3px 0 15px rgba(253, 184, 39, 0.8),
+      0 3px 15px rgba(245, 130, 31, 0.8),
+      inset 0 3px 10px rgba(97, 187, 70, 0.3),
+      inset -3px 0 10px rgba(253, 184, 39, 0.3),
+      inset 0 -3px 10px rgba(245, 130, 31, 0.3);
+  }
+  100% {
+    box-shadow:
+      0 -3px 15px rgba(97, 187, 70, 0.8),
+      3px 0 15px rgba(253, 184, 39, 0.8),
+      0 3px 15px rgba(245, 130, 31, 0.8),
+      -3px 0 15px rgba(224, 58, 62, 0.8),
+      inset 0 3px 10px rgba(97, 187, 70, 0.3),
+      inset -3px 0 10px rgba(253, 184, 39, 0.3),
+      inset 0 -3px 10px rgba(245, 130, 31, 0.3),
+      inset 3px 0 10px rgba(224, 58, 62, 0.3);
+  }
+}
+
+/* Persistent rainbow glow state - applied when animation completes */
+.liquid-glass-bar.glowing-persistent {
+  box-shadow:
+    0 -3px 15px rgba(97, 187, 70, 0.8),
+    3px 0 15px rgba(253, 184, 39, 0.8),
+    0 3px 15px rgba(245, 130, 31, 0.8),
+    -3px 0 15px rgba(224, 58, 62, 0.8),
+    inset 0 3px 10px rgba(97, 187, 70, 0.3),
+    inset -3px 0 10px rgba(253, 184, 39, 0.3),
+    inset 0 -3px 10px rgba(245, 130, 31, 0.3),
+    inset 3px 0 10px rgba(224, 58, 62, 0.3);
+}
+
+@keyframes rainbow-sweep {
+  0% {
+    background-position: -120% 0;
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.8;
+  }
+  100% {
+    background-position: 120% 0;
+    opacity: 0;
+  }
+}
+
+/* Rainbow sweep when bar is activated */
+.liquid-glass-bar.glowing::before {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    rgba(97, 187, 70, 0),
+    rgba(97, 187, 70, 0.3),
+    rgba(253, 184, 39, 0.5),
+    rgba(245, 130, 31, 0.7),
+    rgba(224, 58, 62, 0.7),
+    rgba(150, 61, 151, 0.5),
+    rgba(0, 157, 220, 0.3),
+    rgba(0, 157, 220, 0)
+  );
+  background-size: 200% 100%;
+  background-position: -120% 0;
+  animation: rainbow-sweep 1.5s ease-out forwards;
+  opacity: 1;
+  pointer-events: none;
 }
 
 /* Shimmer effect for bar variant */
@@ -164,4 +333,5 @@ button, input, select, textarea, .interactive {
   );
   animation: shimmer 3s ease-in-out infinite;
   pointer-events: none;
+  transition: opacity 0.3s ease;
 }
