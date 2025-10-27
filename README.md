@@ -7,6 +7,56 @@ Control your entire Mac with AI voice Agents, via:
 
 https://github.com/user-attachments/assets/77a8fe7f-ca2f-4002-9a24-dcf0cfffc0de
 
+## Quick Start
+
+All you need is a single LLM key. Export `OPENAI_API_KEY` (or swap in the key for your preferred provider) and you’re ready.
+
+**1. Install dependencies**
+
+```bash
+git clone https://github.com/ThePickleGawd/FaceTimeOS.git
+cd FaceTimeOS
+
+# Setup Agent-S (see original repo for more details/debugging)
+cd Agent-S
+uv sync
+
+cd ..
+
+# Setup backend
+cd backend
+uv sync
+
+cd ..
+
+# Setup UI
+cd frontend
+SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install --ignore-scripts
+npm rebuild sharp
+```
+
+For more details on Agent S: https://github.com/simular-ai/Agent-S
+
+**2. Provide your API key**
+
+```bash
+# Put this in ~/.zshrc or export it manually
+export OPENAI_API_KEY="sk-your-openai-key"
+```
+
+See the `run_*.sh` files in Agent-S for an idea of what providers we support and how to add your own.
+
+**3. Launch the stack**
+
+In the base directory:
+
+```bash
+# Run everything (UI, backend, Agent S). Change as needed for correct LLM provider
+./run.sh
+```
+
+Note: The UI Grounding endpoint is no longer live. To set this up yourself, visit: https://github.com/bytedance/UI-TARS/blob/main/README_deploy.md
+
 ## Overview
 
 Our project is organized into three folders
