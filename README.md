@@ -2,8 +2,8 @@
 
 Control your entire Mac with AI voice Agents, via:
 
-1. **FaceTime**: Call MacOSAgent, it will answer and share screen. Then, talk naturally to instruct any computer-related task.
-2. **iMessage**: Text MacOSAgent, it will fulfill your prompt
+1. **FaceTime**: Text your Mac asking to start a FaceTime, it start a session and share screen. Then, talk naturally to instruct any computer-related task.
+2. **iMessage**: Text any other prompt, it will fulfill your task
 
 ## FaceTime Demo
 
