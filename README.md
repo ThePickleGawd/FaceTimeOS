@@ -17,8 +17,14 @@ Our project is organized into three folders
 
 ![FaceTimeOS System Diagram](docs/diagram.png)
 
-## Sponsor Tracks
+## Why FaceTimeOS?
 
-### Fetch.ai
+#### 1. Seamless Remote Control
 
-### Fish Audio
+Why download clunky remote desktop apps when you can simply **FaceTime your Mac**?  
+FaceTimeOS lets you call or message your computer directly through **native Apple interfaces** — no extra setup, no third-party tools, just the simplicity of FaceTime and iMessage.
+
+#### 2. Human-Level Intelligence
+
+Powered by our extended **Agent S3** framework, FaceTimeOS achieves **state-of-the-art (OSWorld-verified)** performance on common computer-use tasks — surpassing existing systems like OpenAI or Anthropic’s Computer-Use Agents.  
+We bring **human-level computer interaction** to everyone, accessible from anywhere in the world.
