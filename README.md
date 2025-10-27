@@ -58,7 +58,7 @@ export OPENAI_API_KEY="sk-your-openai-key"
 
 See the `run_*.sh` files in Agent-S for an idea of what providers we support and how to add your own.
 
-**3. Launch the stack**
+**3. Launch FaceTimeOS**
 
 In the base directory:
 
