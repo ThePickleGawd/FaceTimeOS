@@ -70,6 +70,8 @@ When you launch for the first time (see final step), you will be prompted to giv
 
 To route audio directly from FaceTime to our AI Agent, install a lightweight MacOS app. This is optional if you want to use iMessage only.
 
+![FaceTime Audio Setup](/docs/facetime-audio.png)
+
 - Install BlackHole App (Install _both_ 2 and 16 channel version. No config is needed) - https://github.com/ExistentialAudio/BlackHole
 - Restart computer
 - In FaceTime menu, `Video->Microphone` set to BlackHole 2ch. And `Video->Output` set to BlackHole 16ch
