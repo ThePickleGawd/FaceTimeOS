@@ -53,10 +53,21 @@ For more details on Agent S: https://github.com/simular-ai/Agent-S
 
 ```bash
 # Put this in ~/.zshrc or export it manually
-export OPENAI_API_KEY="sk-your-openai-key"
+# Grok is recommended and is currently working with no issues
+export GROK_API_KEY="xai-your-grok-key"
+
+# There are some issues with OpenAI (it worked at one point though!)
+export OPEN_API_KEY="sk-your-openai-key"
 ```
 
 See the `run_*.sh` files in Agent-S for an idea of what providers we support and how to add your own.
+
+https://fish.audio/app/api-keys/
+
+```bash
+# Optional: To enable TTS and STT
+export FISH_API_KEY="key"
+```
 
 **3. Give Agent Permission to Control Keyboard/Mouse**
 
