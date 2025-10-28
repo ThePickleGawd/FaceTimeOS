@@ -5,6 +5,8 @@ Control your entire Mac with AI voice Agents, via:
 1. **FaceTime**: Text your Mac asking to start a FaceTime, it start a session and share screen. Then, talk naturally to instruct any computer-related task.
 2. **iMessage**: Text any other prompt, it will fulfill your task
 
+🏆 **1st Place Grand Prize** at Cal Hacks 12.0 (world's largest collegiate hackathon) - [Devpost](https://devpost.com/software/facetime-macos-ai-agen)
+
 ## FaceTime Demo
 
 <a href="https://www.youtube.com/watch?v=zN96RdE0OSg" target="_blank">
