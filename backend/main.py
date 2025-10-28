@@ -354,7 +354,7 @@ class RemoteClient:
         return requests.get(url, timeout=self.timeout)
 
 
-HTTP_TIMEOUT = float(os.getenv("BACKEND_HTTP_TIMEOUT", "10"))
+HTTP_TIMEOUT = float(os.getenv("BACKEND_HTTP_TIMEOUT", "60"))
 AGENT_HOST = os.environ["AGENT_HOST"]
 AGENT_PORT = os.environ["AGENT_PORT"]
 UI_HOST = os.environ["UI_HOST"]
@@ -487,7 +487,7 @@ def _play_audio_bytes(
 ) -> None:
     """Play synthesized audio through the requested output device if available."""
     global _audio_playing
-    
+
     if not audio_bytes:
         logging.debug("No audio bytes provided for playback")
         return
@@ -500,7 +500,7 @@ def _play_audio_bytes(
     ) as exc:  # pragma: no cover - defensive: runtime environment specific
         logging.error("Audio playback libraries unavailable: %s", exc)
         return
-    
+
     # Stop any currently playing audio to prevent queueing
     if _audio_playing:
         try:

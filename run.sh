@@ -13,9 +13,10 @@ cd ..
 
 # Start Agent S
 cd Agent-S
-# ./run_demo_fast.sh &
-# ./run_demo_best.sh &
-./run_grok.sh &
+# ./run_demo_fast.sh & # What we used in demo video
+# ./run_demo_best.sh & # Agent S3 settings. Needs UI-TARS on Hugging Face
+./run_grok.sh & # Fastest option (recommended)
+# ./run_openai.sh & # Likely most widely available option
 cd ..
 
 # Start frontend

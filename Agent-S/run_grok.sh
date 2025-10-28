@@ -9,4 +9,3 @@ uv run -m src.s3.app \
   --ground_model "grok-4-fast-non-reasoning" \
   --ground_url "https://api.x.ai/v1/" \
   --ground_api_key "$GROK_API_KEY" \
-  --asi_one_api_key "$ASI_ONE_API_KEY"

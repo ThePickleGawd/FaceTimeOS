@@ -169,7 +169,7 @@ def _summarize_message(
         if history
         else "None"
     )
-    
+
     summary = list(SUMMARY_HISTORY)
     summary_block = (
         "\n".join(f"- {entry}" for entry in summary[-SUMMARY_HISTORY_LIMIT:])
@@ -218,14 +218,14 @@ def _summarize_message(
     choices = data.get("choices") or []
     message_data = (choices[0].get("message") if choices else {}) or {}
     summary_text = (message_data.get("content") or "").strip()
-    
+
     if "same action" in summary_text:
         print(summary_text)
         return None
 
     if char_limit and len(summary_text) > char_limit:
         summary_text = summary_text[:char_limit].rstrip()
-    
+
     if summary_text:
         SUMMARY_HISTORY.append(summary_text)
 

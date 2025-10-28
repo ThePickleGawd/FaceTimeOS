@@ -72,7 +72,7 @@ To route audio directly from FaceTime to our AI Agent, install a lightweight Mac
 
 ![FaceTime Audio Setup](/docs/facetime-audio.png)
 
-- Install BlackHole App (Install _both_ 2 and 16 channel version. No config is needed) - https://github.com/ExistentialAudio/BlackHole
+- Install BlackHole App (Install _both_ 2 and 16 channel version. No config is needed): https://github.com/ExistentialAudio/BlackHole
 - Restart computer
 - In FaceTime menu, `Video->Microphone` set to BlackHole 2ch. And `Video->Output` set to BlackHole 16ch
 
@@ -85,7 +85,7 @@ In the base directory:
 ./run.sh
 ```
 
-Note: The UI Grounding endpoint is no longer live. To set this up yourself, visit: https://github.com/bytedance/UI-TARS/blob/main/README_deploy.md
+Note: The UI Grounding endpoint is no longer live. However, this is not needed unless you want the absolute best clicking accuracy. To set this up yourself, visit: https://github.com/bytedance/UI-TARS/blob/main/README_deploy.md
 
 ## Overview
 
