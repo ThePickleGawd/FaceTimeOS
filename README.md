@@ -58,14 +58,19 @@ export OPENAI_API_KEY="sk-your-openai-key"
 
 See the `run_*.sh` files in Agent-S for an idea of what providers we support and how to add your own.
 
-**3. Give Agent Permission to Control Keyboard/Mouse
+**3. Give Agent Permission to Control Keyboard/Mouse**
 
-TODO
+When you launch for the first time (see final step), you will be prompted to give permissions to `Terminal` or `VS Code`, etc. This is required for the Agent to control your computer.
+
+|                     Assesibility                      |                   Automation                    |                    Disk Access                    |
+| :---------------------------------------------------: | :---------------------------------------------: | :-----------------------------------------------: |
+| ![Accessibility Permissions](/docs/accessibility.png) | ![Automation Permissions](/docs/automation.png) | ![Disk Access Permissions](/docs/disk-access.png) |
 
 **4. Route FaceTime audio input/output (optional)**
 
 To route audio directly from FaceTime to our AI Agent, install a lightweight MacOS app. This is optional if you want to use iMessage only.
-- Install BlackHole App (Install *both* 2 and 16 channel version. No config is needed) - https://github.com/ExistentialAudio/BlackHole
+
+- Install BlackHole App (Install _both_ 2 and 16 channel version. No config is needed) - https://github.com/ExistentialAudio/BlackHole
 - Restart computer
 - In FaceTime menu, `Video->Microphone` set to BlackHole 2ch. And `Video->Output` set to BlackHole 16ch
 
