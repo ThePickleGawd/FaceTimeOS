@@ -6,7 +6,7 @@ Control your entire Mac with AI voice Agents, via:
 2. **iMessage**: Text any other prompt, it will fulfill your task
 
 🏆 **1st Place Grand Prize** at Cal Hacks 12.0 (world's largest collegiate hackathon) - [Devpost](https://devpost.com/software/facetime-macos-ai-agent)
-- The team: Dylan Lu, Calvin Lu, Davyn Paringkoan
+- Dylan Lu, Calvin Lu, Davyn Paringkoan
 
 ## FaceTime Demo
 
